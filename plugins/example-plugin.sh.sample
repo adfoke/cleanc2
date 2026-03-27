@@ -1,0 +1,4 @@
+#!/bin/sh
+hook="$1"
+payload="$(cat)"
+printf '%s %s\n' "$hook" "$payload" >> ./plugin-events.log
