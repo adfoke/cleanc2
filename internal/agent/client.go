@@ -25,6 +25,12 @@ import (
 	"cleanc2/internal/protocol"
 )
 
+const (
+	maxTaskOutputBytes = 1 << 20
+	maxCachedResults   = 256
+	cachedResultTTL    = 10 * time.Minute
+)
+
 type Client struct {
 	cfg       Config
 	logger    *zap.Logger
@@ -36,9 +42,14 @@ type Client struct {
 	taskMu    sync.Mutex
 	running   map[string]context.CancelFunc
 	resultMu  sync.Mutex
-	results   map[string]protocol.TaskResult
+	results   map[string]cachedTaskResult
 	uploadMu  sync.Mutex
 	uploads   map[string]*uploadState
+}
+
+type cachedTaskResult struct {
+	result   protocol.TaskResult
+	cachedAt time.Time
 }
 
 type uploadState struct {
@@ -47,6 +58,12 @@ type uploadState struct {
 	file       *os.File
 	size       int64
 	received   int64
+}
+
+type cappedBuffer struct {
+	buf       strings.Builder
+	limit     int
+	truncated bool
 }
 
 func New(cfg Config, logger *zap.Logger) (*Client, error) {
@@ -89,7 +106,7 @@ func New(cfg Config, logger *zap.Logger) (*Client, error) {
 			TLSClientConfig:  tlsCfg,
 		},
 		running: make(map[string]context.CancelFunc),
-		results: make(map[string]protocol.TaskResult),
+		results: make(map[string]cachedTaskResult),
 		uploads: make(map[string]*uploadState),
 	}, nil
 }
@@ -253,10 +270,10 @@ func (c *Client) startTask(ctx context.Context, conn *websocket.Conn, task proto
 		start := time.Now()
 		cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", task.Command)
 
-		var stdoutBuilder strings.Builder
-		var stderrBuilder strings.Builder
-		cmd.Stdout = &stdoutBuilder
-		cmd.Stderr = &stderrBuilder
+		stdoutBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
+		stderrBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
+		cmd.Stdout = stdoutBuffer
+		cmd.Stderr = stderrBuffer
 
 		err := cmd.Run()
 		result := protocol.TaskResult{
@@ -265,8 +282,8 @@ func (c *Client) startTask(ctx context.Context, conn *websocket.Conn, task proto
 			Status:      "success",
 			CompletedAt: time.Now().UTC(),
 			DurationMS:  time.Since(start).Milliseconds(),
-			Stdout:      stdoutBuilder.String(),
-			Stderr:      stderrBuilder.String(),
+			Stdout:      stdoutBuffer.String(),
+			Stderr:      stderrBuffer.String(),
 		}
 
 		if err != nil {
@@ -316,14 +333,37 @@ func (c *Client) taskRunning(taskID string) bool {
 func (c *Client) cacheResult(result protocol.TaskResult) {
 	c.resultMu.Lock()
 	defer c.resultMu.Unlock()
-	c.results[result.TaskID] = result
+	now := time.Now()
+	c.pruneResultsLocked(now)
+	c.results[result.TaskID] = cachedTaskResult{
+		result:   result,
+		cachedAt: now,
+	}
+	for len(c.results) > maxCachedResults {
+		oldestID := ""
+		var oldestAt time.Time
+		for taskID, cached := range c.results {
+			if oldestID == "" || cached.cachedAt.Before(oldestAt) {
+				oldestID = taskID
+				oldestAt = cached.cachedAt
+			}
+		}
+		if oldestID == "" {
+			break
+		}
+		delete(c.results, oldestID)
+	}
 }
 
 func (c *Client) cachedResult(taskID string) (protocol.TaskResult, bool) {
 	c.resultMu.Lock()
 	defer c.resultMu.Unlock()
-	result, ok := c.results[taskID]
-	return result, ok
+	c.pruneResultsLocked(time.Now())
+	cached, ok := c.results[taskID]
+	if !ok {
+		return protocol.TaskResult{}, false
+	}
+	return cached.result, true
 }
 
 func (c *Client) ackTask(conn *websocket.Conn, taskID string) error {
@@ -410,33 +450,7 @@ func (c *Client) handleTransferDone(conn *websocket.Conn, done protocol.FileTran
 	}
 
 	_ = state.file.Close()
-	status := protocol.FileTransferDone{
-		TransferID:  done.TransferID,
-		AgentID:     c.agentID,
-		Direction:   done.Direction,
-		Status:      "success",
-		Size:        state.received,
-		CompletedAt: time.Now().UTC(),
-	}
-
-	if done.Status != "complete" {
-		status.Status = "failed"
-		status.Message = done.Message
-	} else if err := os.Rename(state.tempPath, state.remotePath); err != nil {
-		status.Status = "failed"
-		status.Message = err.Error()
-	} else if checksum, err := common.FileSHA256(state.remotePath); err != nil {
-		status.Status = "failed"
-		status.Message = err.Error()
-	} else {
-		status.ChecksumSHA256 = checksum
-		if done.ChecksumSHA256 != "" && checksum != done.ChecksumSHA256 {
-			status.Status = "failed"
-			status.Message = "checksum mismatch"
-		}
-	}
-
-	c.sendTransferDone(conn, status)
+	c.sendTransferDone(conn, c.finalizeUpload(state, done))
 }
 
 func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart) {
@@ -621,4 +635,88 @@ func decodeEnvelope(raw []byte) (protocol.Envelope, error) {
 	var env protocol.Envelope
 	err := json.Unmarshal(raw, &env)
 	return env, err
+}
+
+func (c *Client) finalizeUpload(state *uploadState, done protocol.FileTransferDone) protocol.FileTransferDone {
+	status := protocol.FileTransferDone{
+		TransferID:  done.TransferID,
+		AgentID:     c.agentID,
+		Direction:   done.Direction,
+		Status:      "success",
+		Size:        state.received,
+		CompletedAt: time.Now().UTC(),
+	}
+
+	removeTemp := true
+	defer func() {
+		if removeTemp && state.tempPath != "" {
+			_ = os.Remove(state.tempPath)
+		}
+	}()
+
+	if done.Status != "complete" {
+		status.Status = "failed"
+		status.Message = done.Message
+		return status
+	}
+
+	checksum, err := common.FileSHA256(state.tempPath)
+	if err != nil {
+		status.Status = "failed"
+		status.Message = err.Error()
+		return status
+	}
+	status.ChecksumSHA256 = checksum
+	if done.ChecksumSHA256 != "" && checksum != done.ChecksumSHA256 {
+		status.Status = "failed"
+		status.Message = "checksum mismatch"
+		return status
+	}
+	if err := os.Rename(state.tempPath, state.remotePath); err != nil {
+		status.Status = "failed"
+		status.Message = err.Error()
+		return status
+	}
+	removeTemp = false
+	return status
+}
+
+func (c *Client) pruneResultsLocked(now time.Time) {
+	for taskID, cached := range c.results {
+		if now.Sub(cached.cachedAt) > cachedResultTTL {
+			delete(c.results, taskID)
+		}
+	}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		b.truncated = b.truncated || len(p) > 0
+		return len(p), nil
+	}
+
+	remaining := b.limit - b.buf.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			_, _ = b.buf.Write(p[:remaining])
+			b.truncated = true
+			return len(p), nil
+		}
+		_, _ = b.buf.Write(p)
+		return len(p), nil
+	}
+
+	b.truncated = true
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	out := b.buf.String()
+	if !b.truncated {
+		return out
+	}
+	if out == "" {
+		return "[output truncated]"
+	}
+	return out + "\n[output truncated]"
 }

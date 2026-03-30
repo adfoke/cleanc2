@@ -15,6 +15,28 @@ import (
 	"cleanc2/internal/protocol"
 )
 
+const (
+	transferAuditMinInterval = time.Second
+	transferAuditMinBytes    = 1 << 20
+)
+
+type TransferStatus struct {
+	ID               string    `json:"transfer_id"`
+	AgentID          string    `json:"agent_id"`
+	Direction        string    `json:"direction"`
+	LocalPath        string    `json:"local_path,omitempty"`
+	RemotePath       string    `json:"remote_path"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message,omitempty"`
+	Size             int64     `json:"size"`
+	BytesTransferred int64     `json:"bytes_transferred"`
+	ChunkSize        int       `json:"chunk_size"`
+	ChecksumSHA256   string    `json:"checksum_sha256,omitempty"`
+	ChecksumVerified bool      `json:"checksum_verified"`
+	CreatedAt        time.Time `json:"created_at"`
+	CompletedAt      time.Time `json:"completed_at,omitempty"`
+}
+
 type transferState struct {
 	ID               string    `json:"transfer_id"`
 	AgentID          string    `json:"agent_id"`
@@ -34,16 +56,19 @@ type transferState struct {
 	tempPath string
 	file     *os.File
 	mu       sync.Mutex
+
+	lastPersistedAt    time.Time
+	lastPersistedBytes int64
 }
 
-func (t *transferState) snapshot() transferState {
+func (t *transferState) snapshot() TransferStatus {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.snapshotLocked()
 }
 
-func (t *transferState) snapshotLocked() transferState {
-	return transferState{
+func (t *transferState) snapshotLocked() TransferStatus {
+	return TransferStatus{
 		ID:               t.ID,
 		AgentID:          t.AgentID,
 		Direction:        t.Direction,
@@ -61,10 +86,10 @@ func (t *transferState) snapshotLocked() transferState {
 	}
 }
 
-func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize int) (transferState, error) {
+func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize int) (TransferStatus, error) {
 	client, err := s.clientForAgent(agentID)
 	if err != nil {
-		return transferState{}, err
+		return TransferStatus{}, err
 	}
 	if chunkSize <= 0 {
 		chunkSize = 256 * 1024
@@ -72,10 +97,10 @@ func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize i
 
 	info, err := os.Stat(localPath)
 	if err != nil {
-		return transferState{}, err
+		return TransferStatus{}, err
 	}
 	if info.IsDir() {
-		return transferState{}, errors.New("local_path must be a file")
+		return TransferStatus{}, errors.New("local_path must be a file")
 	}
 
 	state := &transferState{
@@ -96,16 +121,16 @@ func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize i
 	return state.snapshot(), nil
 }
 
-func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize int) (transferState, error) {
+func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize int) (TransferStatus, error) {
 	client, err := s.clientForAgent(agentID)
 	if err != nil {
-		return transferState{}, err
+		return TransferStatus{}, err
 	}
 	if chunkSize <= 0 {
 		chunkSize = 256 * 1024
 	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
-		return transferState{}, err
+		return TransferStatus{}, err
 	}
 
 	state := &transferState{
@@ -133,7 +158,7 @@ func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize
 	}
 	if err := client.sendMessage(protocol.TypeFileTransferStart, start); err != nil {
 		s.finishTransferWithError(state, err)
-		return transferState{}, err
+		return TransferStatus{}, err
 	}
 
 	return state.snapshot(), nil
@@ -191,8 +216,10 @@ func (s *Service) runUpload(client *agentConn, state *transferState) {
 			}
 			state.mu.Lock()
 			state.BytesTransferred += int64(n)
+			if s.shouldPersistTransferProgressLocked(state, time.Now().UTC()) {
+				s.persistTransferLocked(state)
+			}
 			state.mu.Unlock()
-			s.persistTransfer(state)
 			seq++
 		}
 		if readErr != nil {
@@ -277,7 +304,9 @@ func (s *Service) handleTransferChunk(msg protocol.FileTransferChunk) {
 		return
 	}
 	state.BytesTransferred += int64(len(data))
-	s.persistTransferLocked(state)
+	if s.shouldPersistTransferProgressLocked(state, time.Now().UTC()) {
+		s.persistTransferLocked(state)
+	}
 	state.mu.Unlock()
 }
 
@@ -421,14 +450,14 @@ func (s *Service) deleteTransfer(id string) {
 	delete(s.transfers, id)
 }
 
-func (s *Service) transferSnapshot(id string) (transferState, bool) {
+func (s *Service) transferSnapshot(id string) (TransferStatus, bool) {
 	state, ok := s.getTransfer(id)
 	if !ok {
 		audit, ok, err := s.store.TransferAudit(id)
 		if err != nil || !ok {
-			return transferState{}, false
+			return TransferStatus{}, false
 		}
-		return transferState{
+		return TransferStatus{
 			ID:               audit.TransferID,
 			AgentID:          audit.AgentID,
 			Direction:        audit.Direction,
@@ -484,5 +513,18 @@ func (s *Service) persistTransferLocked(state *transferState) {
 		CompletedAt:      state.CompletedAt,
 	}); err != nil {
 		s.logger.Warn("persist transfer audit", zap.String("transfer_id", state.ID), zap.Error(err))
+		return
 	}
+	state.lastPersistedAt = time.Now().UTC()
+	state.lastPersistedBytes = state.BytesTransferred
+}
+
+func (s *Service) shouldPersistTransferProgressLocked(state *transferState, now time.Time) bool {
+	if state.lastPersistedAt.IsZero() {
+		return true
+	}
+	if state.BytesTransferred-state.lastPersistedBytes >= transferAuditMinBytes {
+		return true
+	}
+	return now.Sub(state.lastPersistedAt) >= transferAuditMinInterval
 }
