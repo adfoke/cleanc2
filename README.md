@@ -20,12 +20,20 @@
 - 内置 Web Dashboard
 - TLS 1.3 / mTLS 参数入口
 
-## 启动
+## 构建和运行
+
+先构建：
+
+```bash
+mkdir -p ./bin
+go build -o ./bin/server ./cmd/server
+go build -o ./bin/agent ./cmd/agent
+```
 
 Server:
 
 ```bash
-go run ./cmd/server -config ./config.yaml
+./bin/server -config ./config.yaml
 ```
 
 命令行参数会覆盖 `config.yaml`。
@@ -33,7 +41,7 @@ go run ./cmd/server -config ./config.yaml
 Agent:
 
 ```bash
-go run ./cmd/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token
+./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token
 ```
 
 ## Web
