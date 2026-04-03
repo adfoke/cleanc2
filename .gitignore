@@ -1,6 +1,8 @@
 .DS_Store
 .gocache/
+.gocache_local/
 .gomodcache/
+.gomodcache_local/
 cleanc2.db
 *.db
 *.db-shm
