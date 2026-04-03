@@ -20,6 +20,55 @@
 - 内置 Web Dashboard
 - TLS 1.3 / mTLS 参数入口
 
+## 架构
+
+```mermaid
+flowchart LR
+    operator["运维人员"]
+    browser["浏览器 / Dashboard"]
+
+    subgraph server["Server"]
+        api["HTTP API / Dashboard"]
+        hub["WebSocket Hub"]
+        dispatch["任务分发 / 目标选择"]
+        transfer["文件传输管理"]
+        plugins["插件管理"]
+        store["Store"]
+    end
+
+    subgraph agent_side["Agent"]
+        conn["长连接客户端"]
+        exec["命令执行器"]
+        metrics["心跳 / 指标上报"]
+        fileio["文件上传 / 下载"]
+    end
+
+    db[("SQLite")]
+    hook["本地插件"]
+
+    operator --> browser
+    browser --> api
+    api --> dispatch
+    api --> transfer
+    api --> store
+    api --> plugins
+    dispatch --> hub
+    transfer --> hub
+    hub <--> conn
+    conn --> exec
+    conn --> metrics
+    conn --> fileio
+    hub --> store
+    store <--> db
+    plugins --> hook
+    store --> api
+```
+
+- 运维人员通过 Web Dashboard 或 API 操作 Server。
+- Server 负责鉴权、Agent 长连接管理、任务分发、文件传输、指标聚合和插件触发。
+- Agent 主动连回 Server，执行命令，回传结果，并周期上报心跳和基础监控。
+- SQLite 持久化 Agent、任务、分组、指标和传输审计，支持离线任务补发。
+
 ## 构建和运行
 
 先构建：
