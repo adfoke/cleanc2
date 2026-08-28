@@ -13,6 +13,8 @@ type Config struct {
 	TLSKeyFile   string `yaml:"tls_key"`
 	ClientCAFile string `yaml:"client_ca"`
 
+	RequireTLS bool `yaml:"require_tls"`
+
 	WriteWait  time.Duration `yaml:"write_wait"`
 	PongWait   time.Duration `yaml:"pong_wait"`
 	PingPeriod time.Duration `yaml:"ping_period"`

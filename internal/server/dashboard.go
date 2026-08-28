@@ -311,7 +311,10 @@ const dashboardHTML = `<!doctype html>
 
       <div class="panel col-5">
         <div class="panel-head"><h2>Metrics</h2><div class="hint" id="metricsHint">未选择 Agent</div></div>
-        <div class="panel-body"><div class="kvs" id="metricsWrap"></div></div>
+        <div class="panel-body">
+          <div class="kvs" id="metricsWrap"></div>
+          <div id="metricsHistoryWrap"></div>
+        </div>
       </div>
 
       <div class="panel col-6">
@@ -534,10 +537,30 @@ const dashboardHTML = `<!doctype html>
         '<div class="hint">未加载插件</div>';
     }
 
+    function renderMetricsHistory(history) {
+      const wrap = byId("metricsHistoryWrap");
+      if (!history || !history.length) {
+        wrap.innerHTML = '<div class="hint">暂无历史指标</div>';
+        return;
+      }
+      wrap.innerHTML =
+        '<div class="hint" style="margin:16px 0 8px;">History</div>' +
+        '<table><thead><tr><th>Time</th><th>Uptime</th><th>Goroutines</th><th>Memory</th><th>Disk Free</th></tr></thead><tbody>' +
+        history.map(m =>
+          '<tr><td>' + prettyTime(m.timestamp) + '</td>' +
+          '<td>' + (m.uptime_secs || 0) + 's</td>' +
+          '<td>' + (m.goroutines || 0) + '</td>' +
+          '<td>' + (m.process_memory_bytes || 0) + '</td>' +
+          '<td>' + (m.root_disk_free_bytes || 0) + '</td></tr>'
+        ).join("") +
+        '</tbody></table>';
+    }
+
     async function refreshMetrics() {
       if (!state.selectedAgentId) {
         byId("metricsHint").textContent = "未选择 Agent";
         byId("metricsWrap").innerHTML = "";
+        byId("metricsHistoryWrap").innerHTML = "";
         return;
       }
       byId("metricsHint").textContent = state.selectedAgentId;
@@ -554,6 +577,12 @@ const dashboardHTML = `<!doctype html>
         ].map(([k, v]) => '<div class="kv"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div></div>').join("");
       } catch (err) {
         byId("metricsWrap").innerHTML = '<div class="hint">' + esc(err.message) + '</div>';
+      }
+      try {
+        const history = await getJSON("/api/v1/agents/" + encodeURIComponent(state.selectedAgentId) + "/metrics/history?limit=20");
+        renderMetricsHistory(history);
+      } catch (err) {
+        renderMetricsHistory([]);
       }
     }
 

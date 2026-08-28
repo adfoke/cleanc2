@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +87,48 @@ func TestFinalizeUploadChecksumMismatchRemovesTempFile(t *testing.T) {
 	}
 	if _, err := os.Stat(remotePath); !os.IsNotExist(err) {
 		t.Fatalf("remote file should not exist, err=%v", err)
+	}
+}
+
+func TestRunCommandSuccess(t *testing.T) {
+	client := &Client{agentID: "agent-1"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result := client.runCommand(ctx, protocol.Task{ID: "t1", Command: "echo hello"})
+	if result.Status != "success" || result.ExitCode != 0 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if !strings.Contains(result.Stdout, "hello") {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+}
+
+func TestRunCommandTimeout(t *testing.T) {
+	client := &Client{agentID: "agent-1"}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	result := client.runCommand(ctx, protocol.Task{ID: "t2", Command: "sleep 5"})
+	if result.Status != "timeout" {
+		t.Fatalf("expected timeout, got %+v", result)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("timeout took too long: %s", elapsed)
+	}
+}
+
+func TestRunCommandCancel(t *testing.T) {
+	client := &Client{agentID: "agent-1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	result := client.runCommand(ctx, protocol.Task{ID: "t3", Command: "sleep 5"})
+	if result.Status != "canceled" {
+		t.Fatalf("expected canceled, got %+v", result)
 	}
 }

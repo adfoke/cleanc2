@@ -6,6 +6,7 @@ plugins: "./plugins"
 tls_cert: ""
 tls_key: ""
 client_ca: ""
+require_tls: false
 write_wait: "10s"
 pong_wait: "70s"
 ping_period: "25s"

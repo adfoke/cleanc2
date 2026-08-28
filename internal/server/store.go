@@ -36,17 +36,6 @@ type Group struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-type AgentMetrics struct {
-	AgentID            string    `json:"agent_id"`
-	Timestamp          time.Time `json:"timestamp"`
-	UptimeSecs         int64     `json:"uptime_secs"`
-	CPUCount           int       `json:"cpu_count"`
-	Goroutines         int       `json:"goroutines"`
-	ProcessMemoryBytes uint64    `json:"process_memory_bytes"`
-	RootDiskTotalBytes uint64    `json:"root_disk_total_bytes"`
-	RootDiskFreeBytes  uint64    `json:"root_disk_free_bytes"`
-}
-
 type TransferAudit struct {
 	TransferID       string    `json:"transfer_id"`
 	AgentID          string    `json:"agent_id"`
@@ -69,9 +58,33 @@ type taskStatus struct {
 	State  string               `json:"state"`
 }
 
+// taskStatusColumns is the shared SELECT column list for reading a task joined
+// with its optional result.
+const taskStatusColumns = `
+	t.id,
+	t.agent_id,
+	t.type,
+	t.command,
+	t.timeout_secs,
+	t.priority,
+	t.created_at,
+	t.state,
+	COALESCE(r.task_id, ''),
+	COALESCE(r.agent_id, ''),
+	COALESCE(r.status, ''),
+	COALESCE(r.exit_code, 0),
+	COALESCE(r.stdout, ''),
+	COALESCE(r.stderr, ''),
+	COALESCE(r.duration_ms, 0),
+	COALESCE(r.completed_at, '')`
+
 type Store struct {
 	db *sql.DB
 }
+
+// maxAgentMetricsHistory bounds per-agent metric history so the table cannot
+// grow without limit under a periodic heartbeat.
+const maxAgentMetricsHistory = 1000
 
 func NewStore(path string) (*Store, error) {
 	if path == "" {
@@ -132,7 +145,8 @@ func (s *Store) init() error {
 			timeout_secs INTEGER NOT NULL,
 			priority INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
-			state TEXT NOT NULL
+			state TEXT NOT NULL,
+			dispatched_at TEXT
 		);`,
 		`CREATE TABLE IF NOT EXISTS task_results (
 			task_id TEXT PRIMARY KEY,
@@ -157,7 +171,8 @@ func (s *Store) init() error {
 			FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS agent_metrics (
-			agent_id TEXT PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
+			agent_id TEXT NOT NULL,
 			timestamp TEXT NOT NULL,
 			uptime_secs INTEGER NOT NULL,
 			cpu_count INTEGER NOT NULL,
@@ -191,7 +206,108 @@ func (s *Store) init() error {
 			return fmt.Errorf("init sqlite: %w", err)
 		}
 	}
+	if err := s.migrateAgentMetrics(); err != nil {
+		return fmt.Errorf("migrate agent metrics: %w", err)
+	}
+	if err := s.migrateTasks(); err != nil {
+		return fmt.Errorf("migrate tasks: %w", err)
+	}
 	return nil
+}
+
+// migrateAgentMetrics upgrades the legacy agent_metrics table (one row per
+// agent, agent_id as primary key) to an append-only time series, preserving
+// any existing samples.
+func (s *Store) migrateAgentMetrics() error {
+	hasID, err := s.tableHasColumn("agent_metrics", "id")
+	if err != nil {
+		return err
+	}
+
+	if !hasID {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+
+		stmts := []string{
+			`ALTER TABLE agent_metrics RENAME TO agent_metrics_legacy;`,
+			`CREATE TABLE agent_metrics (
+				id INTEGER PRIMARY KEY,
+				agent_id TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				uptime_secs INTEGER NOT NULL,
+				cpu_count INTEGER NOT NULL,
+				goroutines INTEGER NOT NULL,
+				process_memory_bytes INTEGER NOT NULL,
+				root_disk_total_bytes INTEGER NOT NULL,
+				root_disk_free_bytes INTEGER NOT NULL
+			);`,
+			`INSERT INTO agent_metrics(agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes)
+				SELECT agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes
+				FROM agent_metrics_legacy;`,
+			`DROP TABLE agent_metrics_legacy;`,
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.Exec(stmt); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_agent_metrics_agent_time ON agent_metrics(agent_id, timestamp);`)
+	return err
+}
+
+// migrateTasks adds the dispatched_at column to legacy databases and backfills
+// it for any tasks that were already dispatched under the old schema, so the
+// task reaper has a timestamp to work from.
+func (s *Store) migrateTasks() error {
+	has, err := s.tableHasColumn("tasks", "dispatched_at")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN dispatched_at TEXT`); err != nil {
+			return err
+		}
+	}
+
+	_, err = s.db.Exec(`
+		UPDATE tasks SET dispatched_at = created_at
+		WHERE state IN ('dispatched', 'cancel_requested') AND dispatched_at IS NULL
+	`)
+	return err
+}
+
+func (s *Store) tableHasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid     int
+			name    string
+			ctype   string
+			notnull int
+			dflt    sql.NullString
+			pk      int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) ResetOnlineAgents() error {
@@ -309,7 +425,8 @@ func (s *Store) AddTask(task protocol.Task) error {
 			timeout_secs = excluded.timeout_secs,
 			priority = excluded.priority,
 			created_at = excluded.created_at,
-			state = excluded.state
+			state = excluded.state,
+			dispatched_at = NULL
 	`, task.ID, task.AgentID, task.Type, task.Command, task.TimeoutSecs, task.Priority, task.CreatedAt.UTC().Format(time.RFC3339Nano), "queued")
 	return err
 }
@@ -342,8 +459,105 @@ func (s *Store) PendingTasks(agentID string) ([]protocol.Task, error) {
 }
 
 func (s *Store) MarkDispatched(taskID string) error {
-	_, err := s.db.Exec(`UPDATE tasks SET state = 'dispatched' WHERE id = ? AND state = 'queued'`, taskID)
+	_, err := s.db.Exec(
+		`UPDATE tasks SET state = 'dispatched', dispatched_at = ? WHERE id = ? AND state = 'queued'`,
+		time.Now().UTC().Format(time.RFC3339Nano), taskID,
+	)
 	return err
+}
+
+// dispatchedTask is a task that has been sent to an agent but not yet
+// finalized, along with when it was dispatched.
+type dispatchedTask struct {
+	Task         protocol.Task
+	State        string
+	DispatchedAt time.Time
+}
+
+// DispatchedTasks returns tasks in 'dispatched' or 'cancel_requested' state,
+// which the reaper may need to finalize.
+func (s *Store) DispatchedTasks() ([]dispatchedTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, agent_id, type, command, timeout_secs, priority, created_at, state, COALESCE(dispatched_at, '')
+		FROM tasks
+		WHERE state IN ('dispatched', 'cancel_requested')
+		ORDER BY dispatched_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []dispatchedTask
+	for rows.Next() {
+		var (
+			item          dispatchedTask
+			createdRaw    string
+			dispatchedRaw string
+		)
+		if err := rows.Scan(
+			&item.Task.ID,
+			&item.Task.AgentID,
+			&item.Task.Type,
+			&item.Task.Command,
+			&item.Task.TimeoutSecs,
+			&item.Task.Priority,
+			&createdRaw,
+			&item.State,
+			&dispatchedRaw,
+		); err != nil {
+			return nil, err
+		}
+		item.Task.CreatedAt = parseNullTime(createdRaw)
+		item.DispatchedAt = parseNullTime(dispatchedRaw)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// MarkTaskTimedOut marks a still-dispatched task as timed out and records a
+// synthetic result, returning true if the task was finalized by this call.
+func (s *Store) MarkTaskTimedOut(taskID, agentID string, at time.Time) (bool, error) {
+	return s.markTaskFinal(taskID, agentID, "timeout", "no result received before timeout", at, "dispatched")
+}
+
+// MarkTaskCanceledAfterReap marks a still-cancel_requested task as canceled and
+// records a synthetic result, returning true if the task was finalized.
+func (s *Store) MarkTaskCanceledAfterReap(taskID, agentID string, at time.Time) (bool, error) {
+	return s.markTaskFinal(taskID, agentID, "canceled", "canceled before a result was received", at, "cancel_requested")
+}
+
+func (s *Store) markTaskFinal(taskID, agentID, status, stderr string, at time.Time, fromState string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE tasks SET state = ? WHERE id = ? AND state = ?`, status, taskID, fromState)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO task_results(task_id, agent_id, status, exit_code, stdout, stderr, duration_ms, completed_at)
+		VALUES(?, ?, ?, 0, '', ?, 0, ?)
+		ON CONFLICT(task_id) DO UPDATE SET
+			status = excluded.status,
+			stderr = excluded.stderr,
+			completed_at = excluded.completed_at
+	`, taskID, agentID, status, stderr, at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return false, err
+	}
+
+	return true, tx.Commit()
 }
 
 func (s *Store) SaveResult(result protocol.TaskResult) error {
@@ -376,76 +590,18 @@ func (s *Store) SaveResult(result protocol.TaskResult) error {
 
 func (s *Store) Task(taskID string) (taskStatus, bool, error) {
 	row := s.db.QueryRow(`
-		SELECT
-			t.id,
-			t.agent_id,
-			t.type,
-			t.command,
-			t.timeout_secs,
-			t.priority,
-			t.created_at,
-			t.state,
-			COALESCE(r.task_id, ''),
-			COALESCE(r.agent_id, ''),
-			COALESCE(r.status, ''),
-			COALESCE(r.exit_code, 0),
-			COALESCE(r.stdout, ''),
-			COALESCE(r.stderr, ''),
-			COALESCE(r.duration_ms, 0),
-			COALESCE(r.completed_at, '')
+		SELECT `+taskStatusColumns+`
 		FROM tasks t
 		LEFT JOIN task_results r ON r.task_id = t.id
 		WHERE t.id = ?
 	`, taskID)
 
-	var (
-		item          taskStatus
-		createdRaw    string
-		resultTaskID  string
-		resultAgentID string
-		resultStatus  string
-		resultExit    int
-		resultStdout  string
-		resultStderr  string
-		resultDurMS   int64
-		completedRaw  string
-	)
-	if err := row.Scan(
-		&item.Task.ID,
-		&item.Task.AgentID,
-		&item.Task.Type,
-		&item.Task.Command,
-		&item.Task.TimeoutSecs,
-		&item.Task.Priority,
-		&createdRaw,
-		&item.State,
-		&resultTaskID,
-		&resultAgentID,
-		&resultStatus,
-		&resultExit,
-		&resultStdout,
-		&resultStderr,
-		&resultDurMS,
-		&completedRaw,
-	); err != nil {
+	item, err := scanTaskStatus(row)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return taskStatus{}, false, nil
 		}
 		return taskStatus{}, false, err
-	}
-
-	item.Task.CreatedAt = parseNullTime(createdRaw)
-	if resultTaskID != "" {
-		item.Result = &protocol.TaskResult{
-			TaskID:      resultTaskID,
-			AgentID:     resultAgentID,
-			Status:      resultStatus,
-			ExitCode:    resultExit,
-			Stdout:      resultStdout,
-			Stderr:      resultStderr,
-			DurationMS:  resultDurMS,
-			CompletedAt: parseNullTime(completedRaw),
-		}
 	}
 	return item, true, nil
 }
@@ -456,23 +612,7 @@ func (s *Store) RecentTasks(limit int) ([]taskStatus, error) {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT
-			t.id,
-			t.agent_id,
-			t.type,
-			t.command,
-			t.timeout_secs,
-			t.priority,
-			t.created_at,
-			t.state,
-			COALESCE(r.task_id, ''),
-			COALESCE(r.agent_id, ''),
-			COALESCE(r.status, ''),
-			COALESCE(r.exit_code, 0),
-			COALESCE(r.stdout, ''),
-			COALESCE(r.stderr, ''),
-			COALESCE(r.duration_ms, 0),
-			COALESCE(r.completed_at, '')
+		SELECT `+taskStatusColumns+`
 		FROM tasks t
 		LEFT JOIN task_results r ON r.task_id = t.id
 		ORDER BY t.created_at DESC
@@ -494,39 +634,83 @@ func (s *Store) RecentTasks(limit int) ([]taskStatus, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) SaveAgentMetrics(metrics AgentMetrics) error {
-	_, err := s.db.Exec(`
+func (s *Store) SaveAgentMetrics(metrics protocol.MetricsReport) error {
+	if _, err := s.db.Exec(`
 		INSERT INTO agent_metrics(agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id) DO UPDATE SET
-			timestamp = excluded.timestamp,
-			uptime_secs = excluded.uptime_secs,
-			cpu_count = excluded.cpu_count,
-			goroutines = excluded.goroutines,
-			process_memory_bytes = excluded.process_memory_bytes,
-			root_disk_total_bytes = excluded.root_disk_total_bytes,
-			root_disk_free_bytes = excluded.root_disk_free_bytes
-	`, metrics.AgentID, metrics.Timestamp.UTC().Format(time.RFC3339Nano), metrics.UptimeSecs, metrics.CPUCount, metrics.Goroutines, metrics.ProcessMemoryBytes, metrics.RootDiskTotalBytes, metrics.RootDiskFreeBytes)
+	`, metrics.AgentID, metrics.Timestamp.UTC().Format(time.RFC3339Nano), metrics.UptimeSecs, metrics.CPUCount, metrics.Goroutines, metrics.ProcessMemoryBytes, metrics.RootDiskTotalBytes, metrics.RootDiskFreeBytes); err != nil {
+		return err
+	}
+	return s.pruneAgentMetrics(metrics.AgentID)
+}
+
+func (s *Store) pruneAgentMetrics(agentID string) error {
+	_, err := s.db.Exec(`
+		DELETE FROM agent_metrics
+		WHERE agent_id = ?
+		AND id NOT IN (
+			SELECT id FROM agent_metrics WHERE agent_id = ?
+			ORDER BY timestamp DESC, id DESC
+			LIMIT ?
+		)
+	`, agentID, agentID, maxAgentMetricsHistory)
 	return err
 }
 
-func (s *Store) AgentMetrics(agentID string) (AgentMetrics, bool, error) {
+func (s *Store) AgentMetrics(agentID string) (protocol.MetricsReport, bool, error) {
 	row := s.db.QueryRow(`
 		SELECT agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes
 		FROM agent_metrics
 		WHERE agent_id = ?
+		ORDER BY timestamp DESC, id DESC
+		LIMIT 1
 	`, agentID)
 
-	var metrics AgentMetrics
+	var metrics protocol.MetricsReport
 	var ts string
 	if err := row.Scan(&metrics.AgentID, &ts, &metrics.UptimeSecs, &metrics.CPUCount, &metrics.Goroutines, &metrics.ProcessMemoryBytes, &metrics.RootDiskTotalBytes, &metrics.RootDiskFreeBytes); err != nil {
 		if err == sql.ErrNoRows {
-			return AgentMetrics{}, false, nil
+			return protocol.MetricsReport{}, false, nil
 		}
-		return AgentMetrics{}, false, err
+		return protocol.MetricsReport{}, false, err
 	}
 	metrics.Timestamp = parseNullTime(ts)
 	return metrics, true, nil
+}
+
+// AgentMetricsHistory returns up to limit recent metric samples for an agent,
+// newest first.
+func (s *Store) AgentMetricsHistory(agentID string, limit int) ([]protocol.MetricsReport, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	rows, err := s.db.Query(`
+		SELECT agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes
+		FROM agent_metrics
+		WHERE agent_id = ?
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ?
+	`, agentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []protocol.MetricsReport
+	for rows.Next() {
+		var m protocol.MetricsReport
+		var ts string
+		if err := rows.Scan(&m.AgentID, &ts, &m.UptimeSecs, &m.CPUCount, &m.Goroutines, &m.ProcessMemoryBytes, &m.RootDiskTotalBytes, &m.RootDiskFreeBytes); err != nil {
+			return nil, err
+		}
+		m.Timestamp = parseNullTime(ts)
+		items = append(items, m)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) UpsertTransferAudit(audit TransferAudit) error {

@@ -1,3 +1,5 @@
+// Package common provides shared helpers for host information collection, ID
+// generation, SHA256 checksums, and file-transfer chunk reassembly.
 package common
 
 import (

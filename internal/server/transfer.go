@@ -18,6 +18,8 @@ import (
 const (
 	transferAuditMinInterval = time.Second
 	transferAuditMinBytes    = 1 << 20
+	transferResumeTimeout    = 30 * time.Second
+	transferStallTimeout     = 10 * time.Minute
 )
 
 type TransferStatus struct {
@@ -38,24 +40,16 @@ type TransferStatus struct {
 }
 
 type transferState struct {
-	ID               string    `json:"transfer_id"`
-	AgentID          string    `json:"agent_id"`
-	Direction        string    `json:"direction"`
-	LocalPath        string    `json:"local_path,omitempty"`
-	RemotePath       string    `json:"remote_path"`
-	Status           string    `json:"status"`
-	Message          string    `json:"message,omitempty"`
-	Size             int64     `json:"size"`
-	BytesTransferred int64     `json:"bytes_transferred"`
-	ChunkSize        int       `json:"chunk_size"`
-	ChecksumSHA256   string    `json:"checksum_sha256,omitempty"`
-	ChecksumVerified bool      `json:"checksum_verified"`
-	CreatedAt        time.Time `json:"created_at"`
-	CompletedAt      time.Time `json:"completed_at,omitempty"`
+	TransferStatus
 
 	tempPath string
 	file     *os.File
 	mu       sync.Mutex
+
+	assembler      *common.ChunkAssembler
+	expectedChunks int
+
+	resumeCh chan int64
 
 	lastPersistedAt    time.Time
 	lastPersistedBytes int64
@@ -68,22 +62,7 @@ func (t *transferState) snapshot() TransferStatus {
 }
 
 func (t *transferState) snapshotLocked() TransferStatus {
-	return TransferStatus{
-		ID:               t.ID,
-		AgentID:          t.AgentID,
-		Direction:        t.Direction,
-		LocalPath:        t.LocalPath,
-		RemotePath:       t.RemotePath,
-		Status:           t.Status,
-		Message:          t.Message,
-		Size:             t.Size,
-		BytesTransferred: t.BytesTransferred,
-		ChunkSize:        t.ChunkSize,
-		ChecksumSHA256:   t.ChecksumSHA256,
-		ChecksumVerified: t.ChecksumVerified,
-		CreatedAt:        t.CreatedAt,
-		CompletedAt:      t.CompletedAt,
-	}
+	return t.TransferStatus
 }
 
 func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize int) (TransferStatus, error) {
@@ -104,15 +83,18 @@ func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize i
 	}
 
 	state := &transferState{
-		ID:         common.NewID(),
-		AgentID:    agentID,
-		Direction:  "upload",
-		LocalPath:  localPath,
-		RemotePath: remotePath,
-		Status:     "queued",
-		Size:       info.Size(),
-		ChunkSize:  chunkSize,
-		CreatedAt:  time.Now().UTC(),
+		TransferStatus: TransferStatus{
+			ID:         common.NewID(),
+			AgentID:    agentID,
+			Direction:  "upload",
+			LocalPath:  localPath,
+			RemotePath: remotePath,
+			Status:     "queued",
+			Size:       info.Size(),
+			ChunkSize:  chunkSize,
+			CreatedAt:  time.Now().UTC(),
+		},
+		resumeCh: make(chan int64, 1),
 	}
 	s.putTransfer(state)
 	s.persistTransfer(state)
@@ -133,16 +115,25 @@ func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize
 		return TransferStatus{}, err
 	}
 
+	tempPath := localPath + ".part"
+	offset, err := common.ResumeOffset(tempPath, chunkSize)
+	if err != nil {
+		return TransferStatus{}, err
+	}
+
 	state := &transferState{
-		ID:         common.NewID(),
-		AgentID:    agentID,
-		Direction:  "download",
-		LocalPath:  localPath,
-		RemotePath: remotePath,
-		Status:     "requested",
-		ChunkSize:  chunkSize,
-		CreatedAt:  time.Now().UTC(),
-		tempPath:   localPath + ".part." + common.NewID(),
+		TransferStatus: TransferStatus{
+			ID:               common.NewID(),
+			AgentID:          agentID,
+			Direction:        "download",
+			LocalPath:        localPath,
+			RemotePath:       remotePath,
+			Status:           "requested",
+			ChunkSize:        chunkSize,
+			BytesTransferred: offset,
+			CreatedAt:        time.Now().UTC(),
+		},
+		tempPath: tempPath,
 	}
 	s.putTransfer(state)
 	s.persistTransfer(state)
@@ -153,6 +144,7 @@ func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize
 		Direction:   "download",
 		LocalPath:   localPath,
 		RemotePath:  remotePath,
+		Offset:      offset,
 		ChunkSize:   chunkSize,
 		RequestedAt: time.Now().UTC(),
 	}
@@ -200,8 +192,27 @@ func (s *Service) runUpload(client *agentConn, state *transferState) {
 		return
 	}
 
+	offset, err := s.waitUploadResume(state)
+	if err != nil {
+		s.finishTransferWithError(state, err)
+		return
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > state.Size {
+		offset = state.Size
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		s.finishTransferWithError(state, err)
+		return
+	}
+	state.mu.Lock()
+	state.BytesTransferred = offset
+	state.mu.Unlock()
+
 	buf := make([]byte, state.ChunkSize)
-	seq := 0
+	seq := int(offset / int64(state.ChunkSize))
 	for {
 		n, readErr := file.Read(buf)
 		if n > 0 {
@@ -253,6 +264,17 @@ func (s *Service) runUpload(client *agentConn, state *transferState) {
 	}
 }
 
+func (s *Service) waitUploadResume(state *transferState) (int64, error) {
+	timer := time.NewTimer(transferResumeTimeout)
+	defer timer.Stop()
+	select {
+	case offset := <-state.resumeCh:
+		return offset, nil
+	case <-timer.C:
+		return 0, errors.New("timed out waiting for agent resume offset")
+	}
+}
+
 func (s *Service) handleTransferStart(msg protocol.FileTransferStart) {
 	state, ok := s.getTransfer(msg.TransferID)
 	if !ok || state.Direction != "download" {
@@ -262,11 +284,23 @@ func (s *Service) handleTransferStart(msg protocol.FileTransferStart) {
 	var fail error
 	state.mu.Lock()
 	if state.file == nil {
-		file, err := os.Create(state.tempPath)
+		chunkSize := msg.ChunkSize
+		if chunkSize <= 0 {
+			chunkSize = state.ChunkSize
+		}
+		if chunkSize <= 0 {
+			chunkSize = 256 * 1024
+		}
+		offset := state.BytesTransferred
+		file, err := common.OpenPartialFile(state.tempPath, offset)
 		if err != nil {
 			fail = err
 		} else {
 			state.file = file
+			assembler := common.NewChunkAssembler(0)
+			assembler.Resume(int(offset / int64(chunkSize)))
+			state.assembler = assembler
+			state.expectedChunks = common.ChunkCount(msg.Size, chunkSize)
 		}
 	}
 	if fail == nil {
@@ -278,6 +312,22 @@ func (s *Service) handleTransferStart(msg protocol.FileTransferStart) {
 	if fail != nil {
 		s.finishTransferWithError(state, fail)
 	}
+}
+
+func (s *Service) handleTransferResume(msg protocol.FileTransferResume) {
+	state, ok := s.getTransfer(msg.TransferID)
+	if !ok || state.Direction != "upload" {
+		return
+	}
+
+	state.mu.Lock()
+	if state.resumeCh != nil {
+		select {
+		case state.resumeCh <- msg.Offset:
+		default:
+		}
+	}
+	state.mu.Unlock()
 }
 
 func (s *Service) handleTransferChunk(msg protocol.FileTransferChunk) {
@@ -298,7 +348,10 @@ func (s *Service) handleTransferChunk(msg protocol.FileTransferChunk) {
 		s.finishTransferWithError(state, errors.New("download file not initialized"))
 		return
 	}
-	if _, err := state.file.Write(data); err != nil {
+	if state.assembler == nil {
+		state.assembler = common.NewChunkAssembler(0)
+	}
+	if err := state.assembler.Write(state.file, msg.Seq, data); err != nil {
 		state.mu.Unlock()
 		s.finishTransferWithError(state, err)
 		return
@@ -337,6 +390,20 @@ func (s *Service) handleTransferDone(msg protocol.FileTransferDone) {
 	s.deleteTransfer(state.ID)
 }
 
+// finalizeDownloadFailed records a failed download while the state lock is
+// held, then cleans up, persists, emits the audit hook and removes the
+// transfer.
+func (s *Service) finalizeDownloadFailed(state *transferState, status, message string, removeLocal bool) {
+	state.Status = status
+	state.Message = message
+	s.cleanupTransferFilesLocked(state, removeLocal)
+	snap := state.snapshotLocked()
+	s.persistTransferLocked(state)
+	state.mu.Unlock()
+	s.plugins.Trigger("transfer_done", snap)
+	s.deleteTransfer(state.ID)
+}
+
 func (s *Service) finishDownload(state *transferState, msg protocol.FileTransferDone) {
 	state.mu.Lock()
 
@@ -354,36 +421,22 @@ func (s *Service) finishDownload(state *transferState, msg protocol.FileTransfer
 	state.ChecksumSHA256 = msg.ChecksumSHA256
 
 	if msg.Status != "success" {
-		state.Status = msg.Status
-		s.cleanupTransferFilesLocked(state, false)
-		snap := state.snapshotLocked()
-		s.persistTransferLocked(state)
-		state.mu.Unlock()
-		s.plugins.Trigger("transfer_done", snap)
-		s.deleteTransfer(state.ID)
+		s.finalizeDownloadFailed(state, msg.Status, msg.Message, false)
 		return
 	}
+	if state.assembler != nil {
+		if err := state.assembler.Finish(state.expectedChunks); err != nil {
+			s.finalizeDownloadFailed(state, "failed", err.Error(), false)
+			return
+		}
+	}
 	if err := os.Rename(state.tempPath, state.LocalPath); err != nil {
-		state.Status = "failed"
-		state.Message = err.Error()
-		s.cleanupTransferFilesLocked(state, false)
-		snap := state.snapshotLocked()
-		s.persistTransferLocked(state)
-		state.mu.Unlock()
-		s.plugins.Trigger("transfer_done", snap)
-		s.deleteTransfer(state.ID)
+		s.finalizeDownloadFailed(state, "failed", err.Error(), false)
 		return
 	}
 	checksum, err := common.FileSHA256(state.LocalPath)
 	if err != nil {
-		state.Status = "failed"
-		state.Message = err.Error()
-		s.cleanupTransferFilesLocked(state, true)
-		snap := state.snapshotLocked()
-		s.persistTransferLocked(state)
-		state.mu.Unlock()
-		s.plugins.Trigger("transfer_done", snap)
-		s.deleteTransfer(state.ID)
+		s.finalizeDownloadFailed(state, "failed", err.Error(), true)
 		return
 	}
 	state.ChecksumVerified = checksum == msg.ChecksumSHA256
@@ -403,6 +456,10 @@ func (s *Service) finishDownload(state *transferState, msg protocol.FileTransfer
 
 func (s *Service) finishTransferWithError(state *transferState, err error) {
 	state.mu.Lock()
+	if state.Status == "success" || state.Status == "failed" {
+		state.mu.Unlock()
+		return
+	}
 	state.Status = "failed"
 	state.Message = err.Error()
 	state.CompletedAt = time.Now().UTC()
@@ -414,16 +471,56 @@ func (s *Service) finishTransferWithError(state *transferState, err error) {
 	s.deleteTransfer(state.ID)
 }
 
+// reapStalledTransfer finalizes a transfer that has made no progress within the
+// stall window, keeping its partial file so a retry can resume. It returns true
+// if the transfer was reaped by this call.
+func (s *Service) reapStalledTransfer(state *transferState, now time.Time) bool {
+	state.mu.Lock()
+	if state.Status == "success" || state.Status == "failed" {
+		state.mu.Unlock()
+		return false
+	}
+	if state.lastPersistedAt.IsZero() || now.Sub(state.lastPersistedAt) < transferStallTimeout {
+		state.mu.Unlock()
+		return false
+	}
+	state.Status = "failed"
+	state.Message = "transfer stalled: no progress"
+	state.CompletedAt = now
+	s.cleanupTransferFilesLocked(state, false)
+	snap := state.snapshotLocked()
+	s.persistTransferLocked(state)
+	state.mu.Unlock()
+	s.plugins.Trigger("transfer_done", snap)
+	s.deleteTransfer(state.ID)
+	return true
+}
+
+// reapStalledTransfers finalizes in-flight transfers that have stalled.
+func (s *Service) reapStalledTransfers(now time.Time) int {
+	s.transferMu.RLock()
+	states := make([]*transferState, 0, len(s.transfers))
+	for _, state := range s.transfers {
+		states = append(states, state)
+	}
+	s.transferMu.RUnlock()
+
+	reaped := 0
+	for _, state := range states {
+		if s.reapStalledTransfer(state, now) {
+			reaped++
+		}
+	}
+	return reaped
+}
+
 func (s *Service) cleanupTransferFilesLocked(state *transferState, removeLocal bool) {
 	if state.file != nil {
 		_ = state.file.Close()
 		state.file = nil
 	}
-	if state.tempPath != "" {
-		if err := os.Remove(state.tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			s.logger.Warn("remove temp transfer file", zap.String("transfer_id", state.ID), zap.String("path", state.tempPath), zap.Error(err))
-		}
-	}
+	// The partial file (tempPath) is intentionally kept so a retry can resume
+	// from where it stopped.
 	if removeLocal && state.LocalPath != "" {
 		if err := os.Remove(state.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.logger.Warn("remove failed transfer file", zap.String("transfer_id", state.ID), zap.String("path", state.LocalPath), zap.Error(err))
@@ -484,10 +581,6 @@ func (s *Service) clientForAgent(agentID string) (*agentConn, error) {
 		return nil, errors.New("agent is offline")
 	}
 	return client, nil
-}
-
-func (s *Service) logTransferError(transferID string, err error) {
-	s.logger.Warn("transfer failed", zap.String("transfer_id", transferID), zap.Error(err))
 }
 
 func (s *Service) persistTransfer(state *transferState) {

@@ -1,3 +1,6 @@
+// Package server implements the CleanC2 server: the HTTP/WebSocket control
+// plane, task dispatch, file transfer management, plugin hooks, and SQLite
+// persistence.
 package server
 
 import (
@@ -8,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -35,13 +39,18 @@ type Service struct {
 	clients    map[string]*agentConn
 	transferMu sync.RWMutex
 	transfers  map[string]*transferState
+
+	reaperStop chan struct{}
+	reaperDone chan struct{}
+	reaperOnce sync.Once
 }
 
 type agentConn struct {
 	id        string
 	meta      protocol.AgentHello
 	conn      *websocket.Conn
-	send      chan outboundMessage
+	send      chan []byte
+	done      chan struct{}
 	service   *Service
 	closeOnce sync.Once
 }
@@ -84,7 +93,21 @@ type taskDispatchResponse struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: checkOrigin,
+}
+
+// checkOrigin rejects cross-site WebSocket requests while still allowing
+// non-browser clients (such as the Go agent) that send no Origin header.
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func New(cfg Config, logger *zap.Logger) (*Service, error) {
@@ -108,10 +131,12 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 	}
 
 	svc := &Service{
-		cfg:       cfg,
-		logger:    logger,
-		clients:   make(map[string]*agentConn),
-		transfers: make(map[string]*transferState),
+		cfg:        cfg,
+		logger:     logger,
+		clients:    make(map[string]*agentConn),
+		transfers:  make(map[string]*transferState),
+		reaperStop: make(chan struct{}),
+		reaperDone: make(chan struct{}),
 	}
 
 	store, err := NewStore(cfg.DBPath)
@@ -137,19 +162,29 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 	if tlsCfg != nil {
 		svc.httpSrv.TLSConfig = tlsCfg
 	}
+	if cfg.RequireTLS && tlsCfg == nil {
+		return nil, errors.New("require_tls is set but no TLS certificate configured (tls_cert/tls_key)")
+	}
 
 	return svc, nil
 }
 
 func (s *Service) Run() error {
 	s.logger.Info("server listening", zap.String("addr", s.cfg.ListenAddr))
+	go s.reapLoop()
 	if s.httpSrv.TLSConfig != nil {
 		return s.httpSrv.ListenAndServeTLS(s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
 	}
+	s.logger.Warn("server is running without TLS; agent traffic and tokens are unencrypted. Configure tls_cert/tls_key (and optionally client_ca) for production.")
 	return s.httpSrv.ListenAndServe()
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
+	s.reaperOnce.Do(func() { close(s.reaperStop) })
+	select {
+	case <-s.reaperDone:
+	case <-ctx.Done():
+	}
 	defer s.store.Close()
 	return s.httpSrv.Shutdown(ctx)
 }
@@ -186,6 +221,19 @@ func (s *Service) routes() *gin.Engine {
 			return
 		}
 		c.JSON(http.StatusOK, metrics)
+	})
+
+	engine.GET("/api/v1/agents/:id/metrics/history", func(c *gin.Context) {
+		history, err := s.store.AgentMetricsHistory(c.Param("id"), queryLimit(c, 50, 500))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if len(history) == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no metrics history"})
+			return
+		}
+		c.JSON(http.StatusOK, history)
 	})
 
 	engine.GET("/api/v1/metrics/overview", func(c *gin.Context) {
@@ -421,7 +469,8 @@ func (s *Service) handleAgentWS(c *gin.Context) {
 
 	agent := &agentConn{
 		conn:    conn,
-		send:    make(chan outboundMessage, 16),
+		send:    make(chan []byte, 16),
+		done:    make(chan struct{}),
 		service: s,
 	}
 	go agent.writeLoop()
@@ -439,6 +488,9 @@ func (s *Service) dispatchOrQueue(task protocol.Task) (bool, error) {
 
 	if ok {
 		if err := client.sendTask(task); err == nil {
+			if err := s.store.MarkDispatched(task.ID); err != nil {
+				return false, err
+			}
 			return true, nil
 		}
 	}

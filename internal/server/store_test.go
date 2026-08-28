@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -166,7 +167,7 @@ func TestMetricsAndTransferAuditPersistence(t *testing.T) {
 	}
 	defer store.Close()
 
-	if err := store.SaveAgentMetrics(AgentMetrics{
+	if err := store.SaveAgentMetrics(protocol.MetricsReport{
 		AgentID:            "agent-1",
 		Timestamp:          time.Now().UTC(),
 		UptimeSecs:         12,
@@ -210,5 +211,151 @@ func TestMetricsAndTransferAuditPersistence(t *testing.T) {
 	}
 	if !ok || !audit.ChecksumVerified || audit.ChecksumSHA256 != "abc" {
 		t.Fatalf("unexpected transfer audit: %+v", audit)
+	}
+}
+
+func TestMetricsHistoryAppendsAndReturnsLatest(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+
+	for i := 0; i < 3; i++ {
+		if err := store.SaveAgentMetrics(protocol.MetricsReport{
+			AgentID:            "agent-1",
+			Timestamp:          time.Now().UTC().Add(time.Duration(i) * time.Second),
+			UptimeSecs:         int64(i),
+			CPUCount:           8,
+			Goroutines:         4 + i,
+			ProcessMemoryBytes: 1000 + uint64(i),
+			RootDiskTotalBytes: 9999,
+			RootDiskFreeBytes:  5000 + uint64(i),
+		}); err != nil {
+			t.Fatalf("save metrics %d: %v", i, err)
+		}
+	}
+
+	latest, ok, err := store.AgentMetrics("agent-1")
+	if err != nil {
+		t.Fatalf("get latest metrics: %v", err)
+	}
+	if !ok || latest.UptimeSecs != 2 || latest.Goroutines != 6 {
+		t.Fatalf("unexpected latest metrics: %+v", latest)
+	}
+
+	history, err := store.AgentMetricsHistory("agent-1", 10)
+	if err != nil {
+		t.Fatalf("get metrics history: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("expected 3 history samples, got %d", len(history))
+	}
+	if history[0].UptimeSecs != 2 || history[2].UptimeSecs != 0 {
+		t.Fatalf("unexpected history ordering: %+v", history)
+	}
+}
+
+func TestMetricsHistoryMigratesLegacySchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE agent_metrics (
+			agent_id TEXT PRIMARY KEY,
+			timestamp TEXT NOT NULL,
+			uptime_secs INTEGER NOT NULL,
+			cpu_count INTEGER NOT NULL,
+			goroutines INTEGER NOT NULL,
+			process_memory_bytes INTEGER NOT NULL,
+			root_disk_total_bytes INTEGER NOT NULL,
+			root_disk_free_bytes INTEGER NOT NULL
+		);`); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO agent_metrics(agent_id, timestamp, uptime_secs, cpu_count, goroutines, process_memory_bytes, root_disk_total_bytes, root_disk_free_bytes)
+		VALUES('agent-1', '2024-01-01T00:00:00Z', 1, 4, 2, 111, 222, 333)`); err != nil {
+		t.Fatalf("insert legacy sample: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("new store (migration): %v", err)
+	}
+	defer store.Close()
+
+	latest, ok, err := store.AgentMetrics("agent-1")
+	if err != nil {
+		t.Fatalf("get migrated metrics: %v", err)
+	}
+	if !ok || latest.UptimeSecs != 1 {
+		t.Fatalf("expected migrated sample, got %+v", latest)
+	}
+
+	if err := store.SaveAgentMetrics(protocol.MetricsReport{
+		AgentID:    "agent-1",
+		Timestamp:  time.Now().UTC(),
+		UptimeSecs: 2,
+		CPUCount:   4,
+	}); err != nil {
+		t.Fatalf("append after migration: %v", err)
+	}
+	history, err := store.AgentMetricsHistory("agent-1", 10)
+	if err != nil {
+		t.Fatalf("history after migration: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("expected 2 samples after migration, got %d", len(history))
+	}
+}
+
+func TestTasksMigrationAddsDispatchedAt(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tasks-legacy.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE tasks (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			command TEXT NOT NULL,
+			timeout_secs INTEGER NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			state TEXT NOT NULL
+		);`); err != nil {
+		t.Fatalf("create legacy tasks: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO tasks(id, agent_id, type, command, timeout_secs, priority, created_at, state)
+		VALUES('t1', 'a1', 'shell', 'echo', 5, 0, '2024-01-01T00:00:00Z', 'dispatched')`); err != nil {
+		t.Fatalf("insert legacy task: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("new store (migration): %v", err)
+	}
+	defer store.Close()
+
+	tasks, err := store.DispatchedTasks()
+	if err != nil {
+		t.Fatalf("dispatched tasks: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].Task.ID != "t1" || tasks[0].DispatchedAt.IsZero() {
+		t.Fatalf("unexpected dispatched tasks after migration: %+v", tasks)
 	}
 }

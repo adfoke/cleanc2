@@ -8,3 +8,5 @@ cleanc2.db
 *.db-shm
 *.db-wal
 .tmp-smoke*/
+.alma-snapshots
+bin/

@@ -7,21 +7,11 @@ import (
 )
 
 func (s *Service) handleMetricsReport(report protocol.MetricsReport) {
-	metrics := AgentMetrics{
-		AgentID:            report.AgentID,
-		Timestamp:          report.Timestamp,
-		UptimeSecs:         report.UptimeSecs,
-		CPUCount:           report.CPUCount,
-		Goroutines:         report.Goroutines,
-		ProcessMemoryBytes: report.ProcessMemoryBytes,
-		RootDiskTotalBytes: report.RootDiskTotalBytes,
-		RootDiskFreeBytes:  report.RootDiskFreeBytes,
-	}
-	if err := s.store.SaveAgentMetrics(metrics); err != nil {
+	if err := s.store.SaveAgentMetrics(report); err != nil {
 		s.logger.Warn("save metrics", zap.String("agent_id", report.AgentID), zap.Error(err))
 		return
 	}
-	s.plugins.Trigger("metrics_report", metrics)
+	s.plugins.Trigger("metrics_report", report)
 }
 
 func (s *Service) activeTransfersCount() int {

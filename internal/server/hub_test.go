@@ -142,6 +142,66 @@ func TestDashboardRouteReturnsHTML(t *testing.T) {
 	}
 }
 
+func TestCheckOriginRejectsCrossSite(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/ws/agent", nil)
+	req.Host = "localhost:8080"
+
+	if !checkOrigin(req) {
+		t.Fatalf("non-browser request without Origin should be allowed")
+	}
+
+	req.Header.Set("Origin", "http://localhost:8080")
+	if !checkOrigin(req) {
+		t.Fatalf("same-origin request should be allowed")
+	}
+
+	req.Header.Set("Origin", "https://evil.example.com")
+	if checkOrigin(req) {
+		t.Fatalf("cross-origin request should be rejected")
+	}
+
+	req.Header.Set("Origin", "://bad")
+	if checkOrigin(req) {
+		t.Fatalf("malformed origin should be rejected")
+	}
+}
+
+func TestAgentMetricsHistoryRoute(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	for i := 0; i < 3; i++ {
+		if err := svc.store.SaveAgentMetrics(protocol.MetricsReport{
+			AgentID:    "agent-1",
+			Timestamp:  time.Now().UTC().Add(time.Duration(i) * time.Second),
+			UptimeSecs: int64(i),
+			CPUCount:   8,
+		}); err != nil {
+			t.Fatalf("save metrics %d: %v", i, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-1/metrics/history", nil)
+	setTestAuth(req)
+	rec := httptest.NewRecorder()
+	svc.engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var history []protocol.MetricsReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &history); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("expected 3 samples, got %d", len(history))
+	}
+	if history[0].UptimeSecs != 2 {
+		t.Fatalf("unexpected newest sample: %+v", history[0])
+	}
+}
+
 func TestDashboardRouteRequiresAuth(t *testing.T) {
 	svc, cleanup := newTestService(t)
 	defer cleanup()
@@ -155,13 +215,13 @@ func TestDashboardRouteRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestDispatchKeepsTaskQueuedUntilAck(t *testing.T) {
+func TestDispatchMarksTaskDispatchedOnSend(t *testing.T) {
 	svc, cleanup := newTestService(t)
 	defer cleanup()
 
 	svc.clients["agent-1"] = &agentConn{
 		id:      "agent-1",
-		send:    make(chan outboundMessage, 1),
+		send:    make(chan []byte, 1),
 		service: svc,
 	}
 
@@ -170,27 +230,68 @@ func TestDispatchKeepsTaskQueuedUntilAck(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 	if !resp.Dispatched {
-		t.Fatalf("expected task to be queued for live client")
+		t.Fatalf("expected task to be dispatched for live client")
 	}
 
 	item, ok, err := svc.store.Task(resp.TaskID)
 	if err != nil {
 		t.Fatalf("get task: %v", err)
 	}
-	if !ok || item.State != "queued" {
-		t.Fatalf("unexpected task state before ack: %+v", item)
+	if !ok || item.State != "dispatched" {
+		t.Fatalf("unexpected task state after send: %+v", item)
 	}
+}
 
-	if err := svc.store.MarkDispatched(resp.TaskID); err != nil {
+func TestReapTasks(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	past := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+
+	timeoutTask := protocol.Task{ID: "t-timeout", AgentID: "a1", Type: "shell", Command: "echo", TimeoutSecs: 5, CreatedAt: now}
+	if err := svc.store.AddTask(timeoutTask); err != nil {
+		t.Fatalf("add timeout task: %v", err)
+	}
+	if err := svc.store.MarkDispatched(timeoutTask.ID); err != nil {
 		t.Fatalf("mark dispatched: %v", err)
 	}
 
-	item, ok, err = svc.store.Task(resp.TaskID)
-	if err != nil {
-		t.Fatalf("get task after ack: %v", err)
+	cancelTask := protocol.Task{ID: "t-cancel", AgentID: "a1", Type: "shell", Command: "echo", TimeoutSecs: 5, CreatedAt: now}
+	if err := svc.store.AddTask(cancelTask); err != nil {
+		t.Fatalf("add cancel task: %v", err)
 	}
-	if !ok || item.State != "dispatched" {
-		t.Fatalf("unexpected task state after ack: %+v", item)
+	if _, err := svc.store.db.Exec(`UPDATE tasks SET state = 'cancel_requested', dispatched_at = ? WHERE id = ?`, past, cancelTask.ID); err != nil {
+		t.Fatalf("set cancel_requested: %v", err)
+	}
+
+	// Backdate the dispatched task so it is stale.
+	if _, err := svc.store.db.Exec(`UPDATE tasks SET dispatched_at = ? WHERE id = ?`, past, timeoutTask.ID); err != nil {
+		t.Fatalf("backdate dispatched_at: %v", err)
+	}
+
+	n, err := svc.reapTimedOutTasks(now)
+	if err != nil {
+		t.Fatalf("reap: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 reaped tasks, got %d", n)
+	}
+
+	timeoutItem, ok, err := svc.store.Task(timeoutTask.ID)
+	if err != nil {
+		t.Fatalf("get timeout task: %v", err)
+	}
+	if !ok || timeoutItem.State != "timeout" || timeoutItem.Result == nil || timeoutItem.Result.Status != "timeout" {
+		t.Fatalf("unexpected timed out task: %+v", timeoutItem)
+	}
+
+	cancelItem, ok, err := svc.store.Task(cancelTask.ID)
+	if err != nil {
+		t.Fatalf("get cancel task: %v", err)
+	}
+	if !ok || cancelItem.State != "canceled" || cancelItem.Result == nil || cancelItem.Result.Status != "canceled" {
+		t.Fatalf("unexpected canceled task: %+v", cancelItem)
 	}
 }
 
@@ -199,13 +300,15 @@ func TestHandleTransferChunkFailurePersistsAndClearsTransfer(t *testing.T) {
 	defer cleanup()
 
 	state := &transferState{
-		ID:         "tx-fail",
-		AgentID:    "agent-1",
-		Direction:  "download",
-		LocalPath:  filepath.Join(t.TempDir(), "out.txt"),
-		RemotePath: "/tmp/out.txt",
-		Status:     "running",
-		CreatedAt:  time.Now().UTC(),
+		TransferStatus: TransferStatus{
+			ID:         "tx-fail",
+			AgentID:    "agent-1",
+			Direction:  "download",
+			LocalPath:  filepath.Join(t.TempDir(), "out.txt"),
+			RemotePath: "/tmp/out.txt",
+			Status:     "running",
+			CreatedAt:  time.Now().UTC(),
+		},
 	}
 	svc.putTransfer(state)
 	svc.handleTransferChunk(protocol.FileTransferChunk{

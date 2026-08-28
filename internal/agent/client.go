@@ -1,3 +1,6 @@
+// Package agent implements the CleanC2 agent: a long-lived client that connects
+// back to the server, executes shell tasks, reports heartbeat and metrics, and
+// handles file transfers.
 package agent
 
 import (
@@ -5,7 +8,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -58,6 +61,9 @@ type uploadState struct {
 	file       *os.File
 	size       int64
 	received   int64
+
+	assembler      *common.ChunkAssembler
+	expectedChunks int
 }
 
 type cappedBuffer struct {
@@ -78,6 +84,10 @@ func New(cfg Config, logger *zap.Logger) (*Client, error) {
 	}
 	if cfg.MaxBackoff <= 0 {
 		cfg.MaxBackoff = 30 * time.Second
+	}
+
+	if !strings.HasPrefix(cfg.ServerURL, "wss://") {
+		logger.Warn("agent is connecting over an unencrypted websocket; the token and all traffic are sent in plaintext. Use a wss:// server URL with TLS for production.")
 	}
 
 	host := common.CollectHostInfo()
@@ -267,45 +277,84 @@ func (c *Client) startTask(ctx context.Context, conn *websocket.Conn, task proto
 		defer cancel()
 		defer c.unregisterTask(task.ID)
 
-		start := time.Now()
-		cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", task.Command)
-
-		stdoutBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
-		stderrBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
-		cmd.Stdout = stdoutBuffer
-		cmd.Stderr = stderrBuffer
-
-		err := cmd.Run()
-		result := protocol.TaskResult{
-			TaskID:      task.ID,
-			AgentID:     c.agentID,
-			Status:      "success",
-			CompletedAt: time.Now().UTC(),
-			DurationMS:  time.Since(start).Milliseconds(),
-			Stdout:      stdoutBuffer.String(),
-			Stderr:      stderrBuffer.String(),
-		}
-
-		if err != nil {
-			result.Status = "failed"
-			switch runCtx.Err() {
-			case context.DeadlineExceeded:
-				result.Status = "timeout"
-			case context.Canceled:
-				result.Status = "canceled"
-			}
-			if exitErr := new(exec.ExitError); errors.As(err, &exitErr) {
-				result.ExitCode = exitErr.ExitCode()
-			} else if result.Status == "failed" {
-				result.Stderr = strings.TrimSpace(result.Stderr + "\n" + err.Error())
-			}
-		}
-
+		result := c.runCommand(runCtx, task)
 		c.cacheResult(result)
 		if err := c.send(conn, protocol.TypeTaskResult, result); err != nil {
 			c.logger.Warn("send result", zap.String("task_id", task.ID), zap.Error(err))
 		}
 	}()
+}
+
+// runCommand executes a single shell task and returns its result. The shell is
+// started in its own process group so that timeout or cancel kills the whole
+// process tree, not just the shell.
+func (c *Client) runCommand(ctx context.Context, task protocol.Task) protocol.TaskResult {
+	start := time.Now()
+	result := protocol.TaskResult{
+		TaskID:  task.ID,
+		AgentID: c.agentID,
+		Status:  "success",
+	}
+
+	cmd := exec.Command("/bin/sh", "-c", task.Command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	stdoutBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
+	stderrBuffer := &cappedBuffer{limit: maxTaskOutputBytes}
+	cmd.Stdout = stdoutBuffer
+	cmd.Stderr = stderrBuffer
+
+	if err := cmd.Start(); err != nil {
+		result.Status = "failed"
+		result.ExitCode = -1
+		result.Stderr = err.Error()
+		result.CompletedAt = time.Now().UTC()
+		result.DurationMS = time.Since(start).Milliseconds()
+		return result
+	}
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+		c.killProcessGroup(cmd)
+		runErr = <-waitCh
+	case runErr = <-waitCh:
+	}
+
+	result.Stdout = stdoutBuffer.String()
+	result.Stderr = stderrBuffer.String()
+	result.CompletedAt = time.Now().UTC()
+	result.DurationMS = time.Since(start).Milliseconds()
+
+	if runErr != nil {
+		result.Status = "failed"
+		switch ctx.Err() {
+		case context.DeadlineExceeded:
+			result.Status = "timeout"
+		case context.Canceled:
+			result.Status = "canceled"
+		}
+		if exitErr := new(exec.ExitError); errors.As(runErr, &exitErr) {
+			result.ExitCode = exitErr.ExitCode()
+		} else if result.Status == "failed" {
+			result.Stderr = strings.TrimSpace(result.Stderr + "\n" + runErr.Error())
+		}
+	}
+
+	return result
+}
+
+func (c *Client) killProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	// A negative pid targets the whole process group created via Setpgid.
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		_ = cmd.Process.Kill()
+	}
 }
 
 func (c *Client) cancelTask(taskID string) {
@@ -374,45 +423,100 @@ func (c *Client) ackTask(conn *websocket.Conn, taskID string) error {
 	})
 }
 
-func (c *Client) handleTransferStart(ctx context.Context, conn *websocket.Conn, start protocol.FileTransferStart) {
+func (c *Client) handleTransferStart(_ context.Context, conn *websocket.Conn, start protocol.FileTransferStart) {
 	switch start.Direction {
 	case "upload":
-		if err := os.MkdirAll(filepath.Dir(start.RemotePath), 0o755); err != nil {
-			c.sendTransferDone(conn, protocol.FileTransferDone{
-				TransferID:  start.TransferID,
-				AgentID:     c.agentID,
-				Direction:   start.Direction,
-				Status:      "failed",
-				Message:     err.Error(),
-				CompletedAt: time.Now().UTC(),
-			})
-			return
-		}
-
-		tempPath := start.RemotePath + ".part." + start.TransferID
-		file, err := os.Create(tempPath)
-		if err != nil {
-			c.sendTransferDone(conn, protocol.FileTransferDone{
-				TransferID:  start.TransferID,
-				AgentID:     c.agentID,
-				Direction:   start.Direction,
-				Status:      "failed",
-				Message:     err.Error(),
-				CompletedAt: time.Now().UTC(),
-			})
-			return
-		}
-
-		c.uploadMu.Lock()
-		c.uploads[start.TransferID] = &uploadState{
-			remotePath: start.RemotePath,
-			tempPath:   tempPath,
-			file:       file,
-			size:       start.Size,
-		}
-		c.uploadMu.Unlock()
+		c.beginUpload(conn, start)
 	case "download":
 		go c.sendFile(conn, start)
+	}
+}
+
+func (c *Client) beginUpload(conn *websocket.Conn, start protocol.FileTransferStart) {
+	if err := os.MkdirAll(filepath.Dir(start.RemotePath), 0o755); err != nil {
+		c.sendTransferDone(conn, protocol.FileTransferDone{
+			TransferID:  start.TransferID,
+			AgentID:     c.agentID,
+			Direction:   start.Direction,
+			Status:      "failed",
+			Message:     err.Error(),
+			CompletedAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	chunkSize := start.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 256 * 1024
+	}
+	tempPath := start.RemotePath + ".part"
+
+	// Close any stale upload targeting the same destination so it cannot write
+	// to the shared partial file concurrently.
+	c.abortUploadsForPath(start.RemotePath)
+
+	offset, err := common.ResumeOffset(tempPath, chunkSize)
+	if err != nil {
+		c.sendTransferDone(conn, protocol.FileTransferDone{
+			TransferID:  start.TransferID,
+			AgentID:     c.agentID,
+			Direction:   start.Direction,
+			Status:      "failed",
+			Message:     err.Error(),
+			CompletedAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	file, err := common.OpenPartialFile(tempPath, offset)
+	if err != nil {
+		c.sendTransferDone(conn, protocol.FileTransferDone{
+			TransferID:  start.TransferID,
+			AgentID:     c.agentID,
+			Direction:   start.Direction,
+			Status:      "failed",
+			Message:     err.Error(),
+			CompletedAt: time.Now().UTC(),
+		})
+		return
+	}
+
+	assembler := common.NewChunkAssembler(0)
+	assembler.Resume(int(offset / int64(chunkSize)))
+
+	c.uploadMu.Lock()
+	c.uploads[start.TransferID] = &uploadState{
+		remotePath:     start.RemotePath,
+		tempPath:       tempPath,
+		file:           file,
+		size:           start.Size,
+		received:       offset,
+		assembler:      assembler,
+		expectedChunks: common.ChunkCount(start.Size, chunkSize),
+	}
+	c.uploadMu.Unlock()
+
+	if err := c.send(conn, protocol.TypeFileTransferResume, protocol.FileTransferResume{
+		TransferID: start.TransferID,
+		AgentID:    c.agentID,
+		Offset:     offset,
+	}); err != nil {
+		c.logger.Warn("send transfer resume", zap.String("transfer_id", start.TransferID), zap.Error(err))
+	}
+}
+
+// abortUploadsForPath closes and drops any in-flight upload state targeting the
+// given remote path.
+func (c *Client) abortUploadsForPath(remotePath string) {
+	c.uploadMu.Lock()
+	defer c.uploadMu.Unlock()
+	for id, state := range c.uploads {
+		if state.remotePath == remotePath {
+			if state.file != nil {
+				_ = state.file.Close()
+			}
+			delete(c.uploads, id)
+		}
 	}
 }
 
@@ -429,7 +533,10 @@ func (c *Client) handleTransferChunk(conn *websocket.Conn, chunk protocol.FileTr
 		c.failUpload(conn, chunk.TransferID, state, err)
 		return
 	}
-	if _, err := state.file.Write(data); err != nil {
+	if state.assembler == nil {
+		state.assembler = common.NewChunkAssembler(0)
+	}
+	if err := state.assembler.Write(state.file, chunk.Seq, data); err != nil {
 		c.failUpload(conn, chunk.TransferID, state, err)
 		return
 	}
@@ -486,6 +593,25 @@ func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart
 		chunkSize = 256 * 1024
 	}
 
+	offset := start.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > info.Size() {
+		offset = info.Size()
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		c.sendTransferDone(conn, protocol.FileTransferDone{
+			TransferID:  start.TransferID,
+			AgentID:     c.agentID,
+			Direction:   start.Direction,
+			Status:      "failed",
+			Message:     err.Error(),
+			CompletedAt: time.Now().UTC(),
+		})
+		return
+	}
+
 	checksum, err := common.FileSHA256(start.RemotePath)
 	if err != nil {
 		c.sendTransferDone(conn, protocol.FileTransferDone{
@@ -506,6 +632,7 @@ func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart
 		LocalPath:      start.LocalPath,
 		RemotePath:     start.RemotePath,
 		Size:           info.Size(),
+		Offset:         offset,
 		ChunkSize:      chunkSize,
 		ChecksumSHA256: checksum,
 		RequestedAt:    time.Now().UTC(),
@@ -515,8 +642,8 @@ func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart
 	}
 
 	buf := make([]byte, chunkSize)
-	seq := 0
-	var transferred int64
+	seq := int(offset / int64(chunkSize))
+	transferred := offset
 	for {
 		n, readErr := file.Read(buf)
 		if n > 0 {
@@ -573,9 +700,7 @@ func (c *Client) failUpload(conn *websocket.Conn, transferID string, state *uplo
 	if state.file != nil {
 		_ = state.file.Close()
 	}
-	if state.tempPath != "" {
-		_ = os.Remove(state.tempPath)
-	}
+	// Keep the partial file so a later attempt can resume from it.
 	c.sendTransferDone(conn, protocol.FileTransferDone{
 		TransferID:  transferID,
 		AgentID:     c.agentID,
@@ -631,12 +756,6 @@ func buildClientTLSConfig(cfg Config) (*tls.Config, error) {
 	return tlsCfg, nil
 }
 
-func decodeEnvelope(raw []byte) (protocol.Envelope, error) {
-	var env protocol.Envelope
-	err := json.Unmarshal(raw, &env)
-	return env, err
-}
-
 func (c *Client) finalizeUpload(state *uploadState, done protocol.FileTransferDone) protocol.FileTransferDone {
 	status := protocol.FileTransferDone{
 		TransferID:  done.TransferID,
@@ -658,6 +777,14 @@ func (c *Client) finalizeUpload(state *uploadState, done protocol.FileTransferDo
 		status.Status = "failed"
 		status.Message = done.Message
 		return status
+	}
+
+	if state.assembler != nil {
+		if err := state.assembler.Finish(state.expectedChunks); err != nil {
+			status.Status = "failed"
+			status.Message = err.Error()
+			return status
+		}
 	}
 
 	checksum, err := common.FileSHA256(state.tempPath)

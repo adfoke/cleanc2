@@ -1,3 +1,5 @@
+// Package protocol defines the JSON message envelope and payload types
+// exchanged between the CleanC2 server and its agents.
 package protocol
 
 import (
@@ -6,18 +8,19 @@ import (
 )
 
 const (
-	TypeHello             = "hello"
-	TypeHelloAck          = "hello_ack"
-	TypeHeartbeat         = "heartbeat"
-	TypeMetricsReport     = "metrics_report"
-	TypeTaskDispatch      = "task_dispatch"
-	TypeTaskAck           = "task_ack"
-	TypeTaskCancel        = "task_cancel"
-	TypeTaskResult        = "task_result"
-	TypeFileTransferStart = "file_transfer_start"
-	TypeFileTransferChunk = "file_transfer_chunk"
-	TypeFileTransferDone  = "file_transfer_done"
-	TypeError             = "error"
+	TypeHello              = "hello"
+	TypeHelloAck           = "hello_ack"
+	TypeHeartbeat          = "heartbeat"
+	TypeMetricsReport      = "metrics_report"
+	TypeTaskDispatch       = "task_dispatch"
+	TypeTaskAck            = "task_ack"
+	TypeTaskCancel         = "task_cancel"
+	TypeTaskResult         = "task_result"
+	TypeFileTransferStart  = "file_transfer_start"
+	TypeFileTransferChunk  = "file_transfer_chunk"
+	TypeFileTransferResume = "file_transfer_resume"
+	TypeFileTransferDone   = "file_transfer_done"
+	TypeError              = "error"
 )
 
 type Envelope struct {
@@ -100,9 +103,18 @@ type FileTransferStart struct {
 	LocalPath      string    `json:"local_path,omitempty"`
 	RemotePath     string    `json:"remote_path"`
 	Size           int64     `json:"size"`
+	Offset         int64     `json:"offset,omitempty"`
 	ChunkSize      int       `json:"chunk_size"`
 	ChecksumSHA256 string    `json:"checksum_sha256,omitempty"`
 	RequestedAt    time.Time `json:"requested_at"`
+}
+
+// FileTransferResume reports how many bytes the receiver has already persisted,
+// so the sender can continue from that offset instead of restarting.
+type FileTransferResume struct {
+	TransferID string `json:"transfer_id"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Offset     int64  `json:"offset"`
 }
 
 type FileTransferChunk struct {

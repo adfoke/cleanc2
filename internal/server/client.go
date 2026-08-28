@@ -1,7 +1,7 @@
 package server
 
 import (
-	"encoding/json"
+	"crypto/subtle"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -9,10 +9,6 @@ import (
 
 	"cleanc2/internal/protocol"
 )
-
-type outboundMessage struct {
-	data []byte
-}
 
 func (a *agentConn) readLoop() {
 	defer a.service.unregister(a)
@@ -41,7 +37,7 @@ func (a *agentConn) readLoop() {
 				a.sendProtocolError("bad_hello", err.Error())
 				continue
 			}
-			if hello.Token != a.service.cfg.AuthToken {
+			if subtle.ConstantTimeCompare([]byte(hello.Token), []byte(a.service.cfg.AuthToken)) != 1 {
 				a.sendProtocolError("auth_failed", "token mismatch")
 				return
 			}
@@ -65,6 +61,9 @@ func (a *agentConn) readLoop() {
 				if err := a.sendTask(task); err != nil {
 					a.requeueTasks(pending[i:])
 					return
+				}
+				if err := a.service.store.MarkDispatched(task.ID); err != nil {
+					a.service.logger.Warn("mark dispatched", zap.String("task_id", task.ID), zap.Error(err))
 				}
 			}
 			a.service.plugins.Trigger("agent_connected", hello)
@@ -97,9 +96,7 @@ func (a *agentConn) readLoop() {
 				a.sendProtocolError("bad_task_ack", err.Error())
 				continue
 			}
-			if err := a.service.store.MarkDispatched(ack.TaskID); err != nil {
-				a.service.logger.Warn("mark dispatched", zap.String("task_id", ack.TaskID), zap.Error(err))
-			}
+			a.service.touch(ack.AgentID)
 		case protocol.TypeMetricsReport:
 			report, err := protocol.UnmarshalPayload[protocol.MetricsReport](env)
 			if err != nil {
@@ -121,6 +118,13 @@ func (a *agentConn) readLoop() {
 				continue
 			}
 			a.service.handleTransferChunk(chunk)
+		case protocol.TypeFileTransferResume:
+			resume, err := protocol.UnmarshalPayload[protocol.FileTransferResume](env)
+			if err != nil {
+				a.sendProtocolError("bad_transfer_resume", err.Error())
+				continue
+			}
+			a.service.handleTransferResume(resume)
 		case protocol.TypeFileTransferDone:
 			done, err := protocol.UnmarshalPayload[protocol.FileTransferDone](env)
 			if err != nil {
@@ -143,15 +147,13 @@ func (a *agentConn) writeLoop() {
 
 	for {
 		select {
-		case msg, ok := <-a.send:
+		case msg := <-a.send:
 			a.conn.SetWriteDeadline(time.Now().Add(a.service.cfg.WriteWait))
-			if !ok {
-				_ = a.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			if err := a.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				return
 			}
-			if err := a.conn.WriteMessage(websocket.TextMessage, msg.data); err != nil {
-				return
-			}
+		case <-a.done:
+			return
 		case <-ticker.C:
 			a.conn.SetWriteDeadline(time.Now().Add(a.service.cfg.WriteWait))
 			if err := a.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -179,7 +181,7 @@ func (a *agentConn) sendMessage(msgType string, payload any) error {
 	}
 
 	select {
-	case a.send <- outboundMessage{data: msg}:
+	case a.send <- msg:
 		return nil
 	default:
 		return websocket.ErrCloseSent
@@ -188,7 +190,7 @@ func (a *agentConn) sendMessage(msgType string, payload any) error {
 
 func (a *agentConn) close() {
 	a.closeOnce.Do(func() {
-		close(a.send)
+		close(a.done)
 		_ = a.conn.Close()
 	})
 }
@@ -199,10 +201,4 @@ func (a *agentConn) requeueTasks(tasks []protocol.Task) {
 			a.service.logger.Warn("requeue task", zap.String("task_id", task.ID), zap.Error(err))
 		}
 	}
-}
-
-func decodeEnvelope(raw []byte) (protocol.Envelope, error) {
-	var env protocol.Envelope
-	err := json.Unmarshal(raw, &env)
-	return env, err
 }

@@ -39,6 +39,7 @@ func loadServerConfig(args []string) (server.Config, error) {
 	tlsCert := cfg.TLSCertFile
 	tlsKey := cfg.TLSKeyFile
 	clientCA := cfg.ClientCAFile
+	requireTLS := cfg.RequireTLS
 	writeWait := cfg.WriteWait
 	pongWait := cfg.PongWait
 	pingPeriod := cfg.PingPeriod
@@ -52,6 +53,7 @@ func loadServerConfig(args []string) (server.Config, error) {
 	fs.StringVar(&tlsCert, "tls-cert", tlsCert, "tls cert file")
 	fs.StringVar(&tlsKey, "tls-key", tlsKey, "tls key file")
 	fs.StringVar(&clientCA, "client-ca", clientCA, "client ca file")
+	fs.BoolVar(&requireTLS, "require-tls", requireTLS, "refuse to start without TLS")
 	fs.DurationVar(&writeWait, "write-wait", writeWait, "websocket write timeout")
 	fs.DurationVar(&pongWait, "pong-wait", pongWait, "heartbeat timeout")
 	fs.DurationVar(&pingPeriod, "ping-period", pingPeriod, "websocket ping interval")
@@ -92,6 +94,9 @@ func loadServerConfig(args []string) (server.Config, error) {
 	}
 	if visited["client-ca"] {
 		cfg.ClientCAFile = clientCA
+	}
+	if visited["require-tls"] {
+		cfg.RequireTLS = requireTLS
 	}
 	if visited["write-wait"] {
 		cfg.WriteWait = writeWait
