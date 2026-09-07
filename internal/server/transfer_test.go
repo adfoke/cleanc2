@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,7 +38,7 @@ func TestHandleTransferChunkThrottlesAuditWrites(t *testing.T) {
 	svc.handleTransferChunk(protocol.FileTransferChunk{
 		TransferID: state.ID,
 		Seq:        0,
-		Data:       base64.StdEncoding.EncodeToString([]byte("abc")),
+		Data:       []byte("abc"),
 	})
 
 	audit, ok, err := svc.store.TransferAudit(state.ID)
@@ -60,7 +59,7 @@ func TestHandleTransferChunkThrottlesAuditWrites(t *testing.T) {
 	svc.handleTransferChunk(protocol.FileTransferChunk{
 		TransferID: state.ID,
 		Seq:        1,
-		Data:       base64.StdEncoding.EncodeToString([]byte("def")),
+		Data:       []byte("def"),
 	})
 
 	audit, ok, err = svc.store.TransferAudit(state.ID)
@@ -132,7 +131,7 @@ func TestHandleTransferStartDownloadResume(t *testing.T) {
 	svc.handleTransferChunk(protocol.FileTransferChunk{
 		TransferID: state.ID,
 		Seq:        2,
-		Data:       base64.StdEncoding.EncodeToString([]byte("ijkl")),
+		Data:       []byte("ijkl"),
 	})
 
 	state.mu.Lock()

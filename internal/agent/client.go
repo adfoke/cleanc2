@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -528,11 +527,7 @@ func (c *Client) handleTransferChunk(conn *websocket.Conn, chunk protocol.FileTr
 		return
 	}
 
-	data, err := base64.StdEncoding.DecodeString(chunk.Data)
-	if err != nil {
-		c.failUpload(conn, chunk.TransferID, state, err)
-		return
-	}
+	data := chunk.Data
 	if state.assembler == nil {
 		state.assembler = common.NewChunkAssembler(0)
 	}
@@ -647,7 +642,7 @@ func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart
 			if err := c.send(conn, protocol.TypeFileTransferChunk, protocol.FileTransferChunk{
 				TransferID: start.TransferID,
 				Seq:        seq,
-				Data:       base64.StdEncoding.EncodeToString(buf[:n]),
+				Data:       buf[:n],
 			}); err != nil {
 				c.logger.Warn("send download chunk", zap.String("transfer_id", start.TransferID), zap.Error(err))
 				return

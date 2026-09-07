@@ -1,0 +1,144 @@
+// Wire protocol between CleanC2 server and agents (decision A1: full
+// protobuf frames over WebSocket binary messages).
+//
+// Framing: every WS frame is self-describing by its opcode — TextMessage
+// carries the legacy JSON Envelope, BinaryMessage carries WireEnvelope below.
+// Negotiation: AgentHello declares proto_version; the server switches the
+// connection to protobuf frames starting at hello_ack.
+//
+// Field-number discipline: never reuse or renumber fields after release.
+syntax = "proto3";
+
+package cleanc2.v1;
+
+option go_package = "cleanc2/internal/protocol/pb;pb";
+
+import "google/protobuf/timestamp.proto";
+
+// WireEnvelope wraps a typed payload. payload is the serialization of the
+// message named by type (e.g. "task_dispatch" -> Task).
+message WireEnvelope {
+  string type = 1;
+  bytes payload = 2;
+}
+
+message AgentHello {
+  string agent_id = 1;
+  string token = 2;
+  string hostname = 3;
+  string os = 4;
+  string arch = 5;
+  repeated string ip_addrs = 6;
+  repeated string tags = 7;
+  string fingerprint = 8;
+  string version = 9;
+  google.protobuf.Timestamp connected_at = 10;
+  // proto_version declares the highest protobuf wire version the agent
+  // understands (currently 1). Absent/0 keeps the legacy JSON protocol.
+  uint32 proto_version = 11;
+}
+
+message HelloAck {
+  google.protobuf.Timestamp server_time = 1;
+  string agent_id = 2;
+  repeated Task pending_tasks = 3;
+}
+
+message Heartbeat {
+  string agent_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+message MetricsReport {
+  string agent_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  int64 uptime_secs = 3;
+  int32 cpu_count = 4;
+  int32 goroutines = 5;
+  uint64 process_memory_bytes = 6;
+  uint64 root_disk_total_bytes = 7;
+  uint64 root_disk_free_bytes = 8;
+}
+
+message Task {
+  string id = 1;
+  string agent_id = 2;
+  // type is the executor kind, currently only "shell".
+  string type = 3;
+  // command is bytes: shell input may contain arbitrary non-UTF-8 bytes.
+  bytes command = 4;
+  int32 timeout_secs = 5;
+  int32 priority = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message TaskAck {
+  string task_id = 1;
+  string agent_id = 2;
+  google.protobuf.Timestamp received_at = 3;
+}
+
+message TaskCancel {
+  string task_id = 1;
+  string agent_id = 2;
+  google.protobuf.Timestamp requested_at = 3;
+}
+
+message TaskResult {
+  string task_id = 1;
+  string agent_id = 2;
+  string status = 3;
+  int32 exit_code = 4;
+  // stdout/stderr are bytes: command output is arbitrary bytes and must not
+  // be corrupted or rejected by UTF-8 validation (the legacy JSON transport
+  // silently replaced invalid sequences with U+FFFD).
+  bytes stdout = 5;
+  bytes stderr = 6;
+  int64 duration_ms = 7;
+  google.protobuf.Timestamp completed_at = 8;
+}
+
+message FileTransferStart {
+  string transfer_id = 1;
+  string agent_id = 2;
+  // direction is "upload" (server -> agent) or "download" (agent -> server).
+  string direction = 3;
+  string local_path = 4;
+  string remote_path = 5;
+  int64 size = 6;
+  int64 offset = 7;
+  int32 chunk_size = 8;
+  string checksum_sha256 = 9;
+  google.protobuf.Timestamp requested_at = 10;
+}
+
+message FileTransferChunk {
+  string transfer_id = 1;
+  int32 seq = 2;
+  // data is raw file bytes on the wire; the legacy JSON protocol transports
+  // the same value base64-encoded, which this field eliminates.
+  bytes data = 3;
+}
+
+message FileTransferResume {
+  string transfer_id = 1;
+  string agent_id = 2;
+  int64 offset = 3;
+}
+
+message FileTransferDone {
+  string transfer_id = 1;
+  string agent_id = 2;
+  string direction = 3;
+  // status: "complete" or "failed".
+  string status = 4;
+  string message = 5;
+  int64 size = 6;
+  string checksum_sha256 = 7;
+  google.protobuf.Timestamp completed_at = 8;
+}
+
+message ErrorMessage {
+  string code = 1;
+  string message = 2;
+}

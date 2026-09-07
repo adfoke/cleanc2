@@ -288,7 +288,7 @@ func TestHandleTransferChunkFailurePersistsAndClearsTransfer(t *testing.T) {
 	svc.putTransfer(state)
 	svc.handleTransferChunk(protocol.FileTransferChunk{
 		TransferID: state.ID,
-		Data:       base64.StdEncoding.EncodeToString([]byte("oops")),
+		Data:       []byte("oops"),
 	})
 
 	if _, ok := svc.getTransfer(state.ID); ok {

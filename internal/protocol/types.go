@@ -1,5 +1,7 @@
-// Package protocol defines the JSON message envelope and payload types
-// exchanged between the CleanC2 server and its agents.
+// Package protocol defines the messages exchanged between the CleanC2
+// server and its agents. Two wire encodings share the same message set:
+// legacy JSON envelopes (WebSocket text frames) and protobuf envelopes
+// (binary frames), negotiated per connection via AgentHello.ProtoVersion.
 package protocol
 
 import (
@@ -39,6 +41,10 @@ type AgentHello struct {
 	Fingerprint string    `json:"fingerprint,omitempty"`
 	Version     string    `json:"version"`
 	ConnectedAt time.Time `json:"connected_at"`
+	// ProtoVersion opts the connection into protobuf binary framing at the
+	// given wire version (BinaryWireVersion). 0 keeps the legacy JSON
+	// protocol; servers that predate this field ignore it and stay on JSON.
+	ProtoVersion uint32 `json:"proto_version,omitempty"`
 }
 
 type HelloAck struct {
@@ -120,7 +126,10 @@ type FileTransferResume struct {
 type FileTransferChunk struct {
 	TransferID string `json:"transfer_id"`
 	Seq        int    `json:"seq"`
-	Data       string `json:"data"`
+	// Data carries raw file bytes. Over JSON it is transported base64-encoded
+	// by encoding/json itself (wire-compatible with the legacy string field);
+	// over protobuf binary frames it goes raw, dropping the 33% inflation.
+	Data []byte `json:"data"`
 }
 
 type FileTransferDone struct {

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/base64"
 	"errors"
 	"io"
 	"os"
@@ -215,7 +214,7 @@ func (s *Service) runUpload(client *agentConn, state *transferState) {
 			chunk := protocol.FileTransferChunk{
 				TransferID: state.ID,
 				Seq:        seq,
-				Data:       base64.StdEncoding.EncodeToString(buf[:n]),
+				Data:       buf[:n],
 			}
 			if err := client.sendMessage(protocol.TypeFileTransferChunk, chunk); err != nil {
 				s.finishTransferWithError(state, err)
@@ -332,11 +331,7 @@ func (s *Service) handleTransferChunk(msg protocol.FileTransferChunk) {
 		return
 	}
 
-	data, err := base64.StdEncoding.DecodeString(msg.Data)
-	if err != nil {
-		s.finishTransferWithError(state, err)
-		return
-	}
+	data := msg.Data
 
 	state.mu.Lock()
 	if state.file == nil {
