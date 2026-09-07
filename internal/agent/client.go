@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,6 +42,10 @@ type Client struct {
 	startedAt time.Time
 	dialer    *websocket.Dialer
 	writeMu   sync.Mutex
+	// binaryOut flips once hello_ack arrives as a binary frame, proving the
+	// server completed the protobuf negotiation; every message after it is
+	// sent protobuf-encoded. Reads always accept both framings by opcode.
+	binaryOut atomic.Bool
 	taskMu    sync.Mutex
 	running   map[string]context.CancelFunc
 	resultMu  sync.Mutex
@@ -159,17 +164,22 @@ func (c *Client) runOnce(ctx context.Context) error {
 	}
 	defer conn.Close()
 
+	// Fresh connection: fall back to legacy framing until the peer proves
+	// protobuf support, then upgrade mid-session at hello_ack.
+	c.binaryOut.Store(false)
+
 	if err := c.send(conn, protocol.TypeHello, protocol.AgentHello{
-		AgentID:     c.agentID,
-		Token:       c.cfg.Token,
-		Hostname:    c.host.Hostname,
-		OS:          c.host.OS,
-		Arch:        c.host.Arch,
-		IPAddrs:     c.host.IPAddrs,
-		Tags:        c.cfg.Tags,
-		Fingerprint: c.host.Fingerprint,
-		Version:     "v0.3.0",
-		ConnectedAt: time.Now().UTC(),
+		AgentID:      c.agentID,
+		Token:        c.cfg.Token,
+		Hostname:     c.host.Hostname,
+		OS:           c.host.OS,
+		Arch:         c.host.Arch,
+		IPAddrs:      c.host.IPAddrs,
+		Tags:         c.cfg.Tags,
+		Fingerprint:  c.host.Fingerprint,
+		Version:      "v0.4.0",
+		ConnectedAt:  time.Now().UTC(),
+		ProtoVersion: protocol.BinaryWireVersion,
 	}); err != nil {
 		return err
 	}
@@ -179,20 +189,32 @@ func (c *Client) runOnce(ctx context.Context) error {
 	defer close(heartbeatDone)
 
 	for {
-		var env protocol.Envelope
-		if err := conn.ReadJSON(&env); err != nil {
+		opcode, raw, err := conn.ReadMessage()
+		if err != nil {
 			return err
 		}
+		in, err := protocol.DecodeFrame(opcode, raw)
+		if err != nil {
+			c.logger.Warn("bad frame", zap.Int("opcode", opcode), zap.Error(err))
+			continue
+		}
 
-		switch env.Type {
+		switch in.MsgType {
 		case protocol.TypeHelloAck:
-			ack, err := protocol.UnmarshalPayload[protocol.HelloAck](env)
+			ack, err := protocol.PayloadOf[protocol.HelloAck](in)
 			if err != nil {
 				return err
 			}
-			c.logger.Info("connected", zap.String("agent_id", ack.AgentID), zap.Int("pending", len(ack.PendingTasks)))
+			// The server switches its own outbound at hello regardless of
+			// what the agent advertised; mirror that decision from the
+			// frame we just received so a mismatch is self-healing.
+			c.binaryOut.Store(in.Opcode == protocol.FrameBinary)
+			c.logger.Info("connected",
+				zap.String("agent_id", ack.AgentID),
+				zap.Int("pending", len(ack.PendingTasks)),
+				zap.String("wire", wireName(in.Opcode)))
 		case protocol.TypeTaskDispatch:
-			task, err := protocol.UnmarshalPayload[protocol.Task](env)
+			task, err := protocol.PayloadOf[protocol.Task](in)
 			if err != nil {
 				return err
 			}
@@ -210,31 +232,31 @@ func (c *Client) runOnce(ctx context.Context) error {
 			}
 			c.startTask(ctx, conn, task)
 		case protocol.TypeTaskCancel:
-			cancelMsg, err := protocol.UnmarshalPayload[protocol.TaskCancel](env)
+			cancelMsg, err := protocol.PayloadOf[protocol.TaskCancel](in)
 			if err != nil {
 				return err
 			}
 			c.cancelTask(cancelMsg.TaskID)
 		case protocol.TypeFileTransferStart:
-			start, err := protocol.UnmarshalPayload[protocol.FileTransferStart](env)
+			start, err := protocol.PayloadOf[protocol.FileTransferStart](in)
 			if err != nil {
 				return err
 			}
 			c.handleTransferStart(ctx, conn, start)
 		case protocol.TypeFileTransferChunk:
-			chunk, err := protocol.UnmarshalPayload[protocol.FileTransferChunk](env)
+			chunk, err := protocol.PayloadOf[protocol.FileTransferChunk](in)
 			if err != nil {
 				return err
 			}
 			c.handleTransferChunk(conn, chunk)
 		case protocol.TypeFileTransferDone:
-			done, err := protocol.UnmarshalPayload[protocol.FileTransferDone](env)
+			done, err := protocol.PayloadOf[protocol.FileTransferDone](in)
 			if err != nil {
 				return err
 			}
 			c.handleTransferDone(conn, done)
 		case protocol.TypeError:
-			msg, err := protocol.UnmarshalPayload[protocol.ErrorMessage](env)
+			msg, err := protocol.PayloadOf[protocol.ErrorMessage](in)
 			if err != nil {
 				return err
 			}
@@ -705,14 +727,29 @@ func (c *Client) failUpload(conn *websocket.Conn, transferID string, state *uplo
 }
 
 func (c *Client) send(conn *websocket.Conn, msgType string, payload any) error {
-	msg, err := protocol.MarshalMessage(msgType, payload)
+	opcode := websocket.TextMessage
+	var msg []byte
+	var err error
+	if c.binaryOut.Load() {
+		opcode = websocket.BinaryMessage
+		msg, err = protocol.MarshalBinaryEnvelope(msgType, payload)
+	} else {
+		msg, err = protocol.MarshalMessage(msgType, payload)
+	}
 	if err != nil {
 		return err
 	}
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return conn.WriteMessage(websocket.TextMessage, msg)
+	return conn.WriteMessage(opcode, msg)
+}
+
+func wireName(opcode int) string {
+	if opcode == protocol.FrameBinary {
+		return "protobuf"
+	}
+	return "json"
 }
 
 func buildClientTLSConfig(cfg Config) (*tls.Config, error) {

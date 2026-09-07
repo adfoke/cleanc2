@@ -5,6 +5,7 @@
 ## 能力
 
 - Agent 主动连接 Server
+- 线协议：Protobuf 二进制帧（A1），JSON 旧帧按 hello 协商共存
 - 心跳与在线状态管理
 - 单机 / 批量命令下发
 - 按 `agent_ids`、`group_ids`、`tags` 选目标
@@ -18,7 +19,7 @@
 - 文件传输断点续传（失败后保留 `.part` 临时文件，重试自动续传）
 - 传输超时回收（进行中的传输 10 分钟无进展自动标记失败，保留 `.part`）
 - 文件传输分块完整性校验（按 `Seq` 重排、缺包/重复检测）
-- 文件传输 SHA256 校验
+- 文件传输 SHA256 校验（二进制帧下 chunk 不再 base64，省 33% 膨胀）
 - 文件传输审计
 - Agent 基础监控上报 + 指标历史（每 Agent 保留最近 1000 条）
 - 本地插件钩子
@@ -82,7 +83,7 @@ flowchart LR
 
 ## 构建和运行
 
-要求 Go 1.26+（`go.mod` 声明）。
+要求 Go 1.27+（`go.mod` 声明）。
 
 先构建：
 
@@ -96,6 +97,12 @@ go build -o ./bin/agent ./cmd/agent
 
 ```bash
 go test ./...
+```
+
+改动 `proto/cleanc2/v1/wire.proto` 后重新生成线协议码（需要 `protoc` 与 `protoc-gen-go`）：
+
+```bash
+./scripts/gen-proto.sh
 ```
 
 Server:

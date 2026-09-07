@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -51,14 +52,25 @@ type Service struct {
 	reaperOnce sync.Once
 }
 
+// wsFrame is a transport-frame with the WebSocket opcode it must go out on:
+// TextMessage selects legacy JSON, BinaryMessage protobuf.
+type wsFrame struct {
+	opcode int
+	data   []byte
+}
+
 type agentConn struct {
 	id        string
 	meta      protocol.AgentHello
 	conn      *websocket.Conn
-	send      chan []byte
+	send      chan wsFrame
 	done      chan struct{}
 	service   *Service
 	closeOnce sync.Once
+
+	// binaryOut flips to true once the hello exchange proves the peer
+	// speaks protobuf; reads always accept both framings by opcode.
+	binaryOut atomic.Bool
 }
 
 type taskRequest struct {
@@ -571,7 +583,7 @@ func (s *Service) handleAgentWS(c *gin.Context) {
 
 	agent := &agentConn{
 		conn:    conn,
-		send:    make(chan []byte, 16),
+		send:    make(chan wsFrame, 16),
 		done:    make(chan struct{}),
 		service: s,
 	}

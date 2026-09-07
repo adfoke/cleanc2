@@ -639,13 +639,16 @@ func (x *TaskCancel) GetRequestedAt() *timestamppb.Timestamp {
 }
 
 type TaskResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	AgentId       string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,4,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	Stdout        string                 `protobuf:"bytes,5,opt,name=stdout,proto3" json:"stdout,omitempty"`
-	Stderr        string                 `protobuf:"bytes,6,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TaskId   string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AgentId  string                 `protobuf:"bytes,2,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Status   string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	ExitCode int32                  `protobuf:"varint,4,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	// stdout/stderr are bytes: command output is arbitrary bytes and must not
+	// be corrupted or rejected by UTF-8 validation (the legacy JSON transport
+	// silently replaced invalid sequences with U+FFFD).
+	Stdout        []byte                 `protobuf:"bytes,5,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr        []byte                 `protobuf:"bytes,6,opt,name=stderr,proto3" json:"stderr,omitempty"`
 	DurationMs    int64                  `protobuf:"varint,7,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	CompletedAt   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -710,18 +713,18 @@ func (x *TaskResult) GetExitCode() int32 {
 	return 0
 }
 
-func (x *TaskResult) GetStdout() string {
+func (x *TaskResult) GetStdout() []byte {
 	if x != nil {
 		return x.Stdout
 	}
-	return ""
+	return nil
 }
 
-func (x *TaskResult) GetStderr() string {
+func (x *TaskResult) GetStderr() []byte {
 	if x != nil {
 		return x.Stderr
 	}
-	return ""
+	return nil
 }
 
 func (x *TaskResult) GetDurationMs() int64 {
@@ -1198,8 +1201,8 @@ const file_cleanc2_v1_wire_proto_rawDesc = "" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1b\n" +
 	"\texit_code\x18\x04 \x01(\x05R\bexitCode\x12\x16\n" +
-	"\x06stdout\x18\x05 \x01(\tR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\x06 \x01(\tR\x06stderr\x12\x1f\n" +
+	"\x06stdout\x18\x05 \x01(\fR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\x06 \x01(\fR\x06stderr\x12\x1f\n" +
 	"\vduration_ms\x18\a \x01(\x03R\n" +
 	"durationMs\x12=\n" +
 	"\fcompleted_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\"\xe0\x02\n" +

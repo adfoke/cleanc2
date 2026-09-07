@@ -14,14 +14,14 @@ import (
 
 func defaultServerConfig() server.Config {
 	return server.Config{
-		ListenAddr: ":8080",
+		ListenAddr:      ":8080",
 		OperatorUDSPath: "./cleanc2.sock",
-		AuthToken:  "cleanc2-dev-token",
-		DBPath:     "cleanc2.db",
-		PluginDir:  "plugins",
-		WriteWait:  10 * time.Second,
-		PongWait:   70 * time.Second,
-		PingPeriod: 25 * time.Second,
+		AuthToken:       "cleanc2-dev-token",
+		DBPath:          "cleanc2.db",
+		PluginDir:       "plugins",
+		WriteWait:       10 * time.Second,
+		PongWait:        70 * time.Second,
+		PingPeriod:      25 * time.Second,
 	}
 }
 

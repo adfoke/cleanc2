@@ -24,15 +24,20 @@ func (a *agentConn) readLoop() {
 	})
 
 	for {
-		var env protocol.Envelope
-		if err := a.conn.ReadJSON(&env); err != nil {
+		opcode, raw, err := a.conn.ReadMessage()
+		if err != nil {
 			a.service.logger.Info("agent disconnected", zap.String("agent_id", a.id), zap.Error(err))
 			return
 		}
+		in, err := protocol.DecodeFrame(opcode, raw)
+		if err != nil {
+			a.service.logger.Warn("bad frame", zap.String("agent_id", a.id), zap.Int("opcode", opcode), zap.Error(err))
+			continue
+		}
 
-		switch env.Type {
+		switch in.MsgType {
 		case protocol.TypeHello:
-			hello, err := protocol.UnmarshalPayload[protocol.AgentHello](env)
+			hello, err := protocol.PayloadOf[protocol.AgentHello](in)
 			if err != nil {
 				a.sendProtocolError("bad_hello", err.Error())
 				continue
@@ -41,6 +46,10 @@ func (a *agentConn) readLoop() {
 				a.sendProtocolError("auth_failed", "token mismatch")
 				return
 			}
+
+			// Honour the peer's advertised wire version before composing
+			// hello_ack, so the ack itself already uses the new framing.
+			a.binaryOut.Store(hello.ProtoVersion >= protocol.BinaryWireVersion)
 
 			pending, err := a.service.register(a, hello)
 			if err != nil {
@@ -73,13 +82,13 @@ func (a *agentConn) readLoop() {
 				a.sendProtocolError("not_registered", "hello is required first")
 				continue
 			}
-			if _, err := protocol.UnmarshalPayload[protocol.Heartbeat](env); err != nil {
+			if _, err := protocol.PayloadOf[protocol.Heartbeat](in); err != nil {
 				a.sendProtocolError("bad_heartbeat", err.Error())
 				continue
 			}
 			a.service.touch(a.id)
 		case protocol.TypeTaskResult:
-			result, err := protocol.UnmarshalPayload[protocol.TaskResult](env)
+			result, err := protocol.PayloadOf[protocol.TaskResult](in)
 			if err != nil {
 				a.sendProtocolError("bad_result", err.Error())
 				continue
@@ -91,49 +100,49 @@ func (a *agentConn) readLoop() {
 			a.service.plugins.Trigger("task_result", result)
 			a.service.touch(result.AgentID)
 		case protocol.TypeTaskAck:
-			ack, err := protocol.UnmarshalPayload[protocol.TaskAck](env)
+			ack, err := protocol.PayloadOf[protocol.TaskAck](in)
 			if err != nil {
 				a.sendProtocolError("bad_task_ack", err.Error())
 				continue
 			}
 			a.service.touch(ack.AgentID)
 		case protocol.TypeMetricsReport:
-			report, err := protocol.UnmarshalPayload[protocol.MetricsReport](env)
+			report, err := protocol.PayloadOf[protocol.MetricsReport](in)
 			if err != nil {
 				a.sendProtocolError("bad_metrics_report", err.Error())
 				continue
 			}
 			a.service.handleMetricsReport(report)
 		case protocol.TypeFileTransferStart:
-			start, err := protocol.UnmarshalPayload[protocol.FileTransferStart](env)
+			start, err := protocol.PayloadOf[protocol.FileTransferStart](in)
 			if err != nil {
 				a.sendProtocolError("bad_transfer_start", err.Error())
 				continue
 			}
 			a.service.handleTransferStart(start)
 		case protocol.TypeFileTransferChunk:
-			chunk, err := protocol.UnmarshalPayload[protocol.FileTransferChunk](env)
+			chunk, err := protocol.PayloadOf[protocol.FileTransferChunk](in)
 			if err != nil {
 				a.sendProtocolError("bad_transfer_chunk", err.Error())
 				continue
 			}
 			a.service.handleTransferChunk(chunk)
 		case protocol.TypeFileTransferResume:
-			resume, err := protocol.UnmarshalPayload[protocol.FileTransferResume](env)
+			resume, err := protocol.PayloadOf[protocol.FileTransferResume](in)
 			if err != nil {
 				a.sendProtocolError("bad_transfer_resume", err.Error())
 				continue
 			}
 			a.service.handleTransferResume(resume)
 		case protocol.TypeFileTransferDone:
-			done, err := protocol.UnmarshalPayload[protocol.FileTransferDone](env)
+			done, err := protocol.PayloadOf[protocol.FileTransferDone](in)
 			if err != nil {
 				a.sendProtocolError("bad_transfer_done", err.Error())
 				continue
 			}
 			a.service.handleTransferDone(done)
 		default:
-			a.sendProtocolError("unsupported_type", env.Type)
+			a.sendProtocolError("unsupported_type", in.MsgType)
 		}
 	}
 }
@@ -149,7 +158,7 @@ func (a *agentConn) writeLoop() {
 		select {
 		case msg := <-a.send:
 			a.conn.SetWriteDeadline(time.Now().Add(a.service.cfg.WriteWait))
-			if err := a.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := a.conn.WriteMessage(msg.opcode, msg.data); err != nil {
 				return
 			}
 		case <-a.done:
@@ -175,13 +184,23 @@ func (a *agentConn) sendProtocolError(code, message string) {
 }
 
 func (a *agentConn) sendMessage(msgType string, payload any) error {
-	msg, err := protocol.MarshalMessage(msgType, payload)
-	if err != nil {
-		return err
+	var frame wsFrame
+	if a.binaryOut.Load() {
+		data, err := protocol.MarshalBinaryEnvelope(msgType, payload)
+		if err != nil {
+			return err
+		}
+		frame = wsFrame{opcode: websocket.BinaryMessage, data: data}
+	} else {
+		data, err := protocol.MarshalMessage(msgType, payload)
+		if err != nil {
+			return err
+		}
+		frame = wsFrame{opcode: websocket.TextMessage, data: data}
 	}
 
 	select {
-	case a.send <- msg:
+	case a.send <- frame:
 		return nil
 	default:
 		return websocket.ErrCloseSent

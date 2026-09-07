@@ -198,7 +198,7 @@ func TestDispatchMarksTaskDispatchedOnSend(t *testing.T) {
 
 	svc.clients["agent-1"] = &agentConn{
 		id:      "agent-1",
-		send:    make(chan []byte, 1),
+		send:    make(chan wsFrame, 1),
 		service: svc,
 	}
 
