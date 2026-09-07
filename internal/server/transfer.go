@@ -36,7 +36,7 @@ type TransferStatus struct {
 	ChecksumSHA256   string    `json:"checksum_sha256,omitempty"`
 	ChecksumVerified bool      `json:"checksum_verified"`
 	CreatedAt        time.Time `json:"created_at"`
-	CompletedAt      time.Time `json:"completed_at,omitempty"`
+	CompletedAt      time.Time `json:"completed_at"`
 }
 
 type transferState struct {
@@ -83,18 +83,16 @@ func (s *Service) startUpload(agentID, localPath, remotePath string, chunkSize i
 	}
 
 	state := &transferState{
-		TransferStatus: TransferStatus{
-			ID:         common.NewID(),
-			AgentID:    agentID,
-			Direction:  "upload",
-			LocalPath:  localPath,
-			RemotePath: remotePath,
-			Status:     "queued",
-			Size:       info.Size(),
-			ChunkSize:  chunkSize,
-			CreatedAt:  time.Now().UTC(),
-		},
-		resumeCh: make(chan int64, 1),
+		ID:         common.NewID(),
+		AgentID:    agentID,
+		Direction:  "upload",
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		Status:     "queued",
+		Size:       info.Size(),
+		ChunkSize:  chunkSize,
+		CreatedAt:  time.Now().UTC(),
+		resumeCh:   make(chan int64, 1),
 	}
 	s.putTransfer(state)
 	s.persistTransfer(state)
@@ -122,18 +120,16 @@ func (s *Service) startDownload(agentID, remotePath, localPath string, chunkSize
 	}
 
 	state := &transferState{
-		TransferStatus: TransferStatus{
-			ID:               common.NewID(),
-			AgentID:          agentID,
-			Direction:        "download",
-			LocalPath:        localPath,
-			RemotePath:       remotePath,
-			Status:           "requested",
-			ChunkSize:        chunkSize,
-			BytesTransferred: offset,
-			CreatedAt:        time.Now().UTC(),
-		},
-		tempPath: tempPath,
+		ID:               common.NewID(),
+		AgentID:          agentID,
+		Direction:        "download",
+		LocalPath:        localPath,
+		RemotePath:       remotePath,
+		Status:           "requested",
+		ChunkSize:        chunkSize,
+		BytesTransferred: offset,
+		CreatedAt:        time.Now().UTC(),
+		tempPath:         tempPath,
 	}
 	s.putTransfer(state)
 	s.persistTransfer(state)

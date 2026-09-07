@@ -221,7 +221,7 @@ func TestMetricsHistoryAppendsAndReturnsLatest(t *testing.T) {
 	}
 	defer store.Close()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := store.SaveAgentMetrics(protocol.MetricsReport{
 			AgentID:            "agent-1",
 			Timestamp:          time.Now().UTC().Add(time.Duration(i) * time.Second),

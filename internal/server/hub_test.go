@@ -170,7 +170,7 @@ func TestAgentMetricsHistoryRoute(t *testing.T) {
 	svc, cleanup := newTestService(t)
 	defer cleanup()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := svc.store.SaveAgentMetrics(protocol.MetricsReport{
 			AgentID:    "agent-1",
 			Timestamp:  time.Now().UTC().Add(time.Duration(i) * time.Second),
@@ -300,15 +300,13 @@ func TestHandleTransferChunkFailurePersistsAndClearsTransfer(t *testing.T) {
 	defer cleanup()
 
 	state := &transferState{
-		TransferStatus: TransferStatus{
-			ID:         "tx-fail",
-			AgentID:    "agent-1",
-			Direction:  "download",
-			LocalPath:  filepath.Join(t.TempDir(), "out.txt"),
-			RemotePath: "/tmp/out.txt",
-			Status:     "running",
-			CreatedAt:  time.Now().UTC(),
-		},
+		ID:         "tx-fail",
+		AgentID:    "agent-1",
+		Direction:  "download",
+		LocalPath:  filepath.Join(t.TempDir(), "out.txt"),
+		RemotePath: "/tmp/out.txt",
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
 	}
 	svc.putTransfer(state)
 	svc.handleTransferChunk(protocol.FileTransferChunk{

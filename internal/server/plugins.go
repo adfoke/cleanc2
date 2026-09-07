@@ -76,7 +76,6 @@ func (pm *PluginManager) Trigger(hook string, payload any) {
 	}
 
 	for _, plugin := range pm.plugins {
-		plugin := plugin
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

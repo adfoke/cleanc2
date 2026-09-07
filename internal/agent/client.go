@@ -593,10 +593,7 @@ func (c *Client) sendFile(conn *websocket.Conn, start protocol.FileTransferStart
 		chunkSize = 256 * 1024
 	}
 
-	offset := start.Offset
-	if offset < 0 {
-		offset = 0
-	}
+	offset := max(start.Offset, 0)
 	if offset > info.Size() {
 		offset = info.Size()
 	}

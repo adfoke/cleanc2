@@ -49,7 +49,7 @@ type TransferAudit struct {
 	ChecksumSHA256   string    `json:"checksum_sha256,omitempty"`
 	ChecksumVerified bool      `json:"checksum_verified"`
 	CreatedAt        time.Time `json:"created_at"`
-	CompletedAt      time.Time `json:"completed_at,omitempty"`
+	CompletedAt      time.Time `json:"completed_at"`
 }
 
 type taskStatus struct {

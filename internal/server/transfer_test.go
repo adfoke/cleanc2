@@ -23,17 +23,15 @@ func TestHandleTransferChunkThrottlesAuditWrites(t *testing.T) {
 	defer file.Close()
 
 	state := &transferState{
-		TransferStatus: TransferStatus{
-			ID:         "tx-1",
-			AgentID:    "agent-1",
-			Direction:  "download",
-			LocalPath:  filepath.Join(dir, "out.txt"),
-			RemotePath: "/tmp/out.txt",
-			Status:     "running",
-			CreatedAt:  time.Now().UTC(),
-		},
-		tempPath: tempPath,
-		file:     file,
+		ID:         "tx-1",
+		AgentID:    "agent-1",
+		Direction:  "download",
+		LocalPath:  filepath.Join(dir, "out.txt"),
+		RemotePath: "/tmp/out.txt",
+		Status:     "running",
+		CreatedAt:  time.Now().UTC(),
+		tempPath:   tempPath,
+		file:       file,
 	}
 	svc.putTransfer(state)
 	svc.persistTransfer(state)
@@ -82,8 +80,8 @@ func TestHandleTransferResume(t *testing.T) {
 	defer cleanup()
 
 	state := &transferState{
-		TransferStatus: TransferStatus{ID: "tx-up", AgentID: "a1", Direction: "upload"},
-		resumeCh:       make(chan int64, 1),
+		ID: "tx-up", AgentID: "a1", Direction: "upload",
+		resumeCh: make(chan int64, 1),
 	}
 	svc.putTransfer(state)
 
@@ -111,18 +109,16 @@ func TestHandleTransferStartDownloadResume(t *testing.T) {
 	}
 
 	state := &transferState{
-		TransferStatus: TransferStatus{
-			ID:               "tx-resume",
-			AgentID:          "agent-1",
-			Direction:        "download",
-			LocalPath:        filepath.Join(dir, "out.txt"),
-			RemotePath:       "/tmp/out.txt",
-			Status:           "requested",
-			ChunkSize:        4,
-			BytesTransferred: 8,
-			CreatedAt:        time.Now().UTC(),
-		},
-		tempPath: tempPath,
+		ID:               "tx-resume",
+		AgentID:          "agent-1",
+		Direction:        "download",
+		LocalPath:        filepath.Join(dir, "out.txt"),
+		RemotePath:       "/tmp/out.txt",
+		Status:           "requested",
+		ChunkSize:        4,
+		BytesTransferred: 8,
+		CreatedAt:        time.Now().UTC(),
+		tempPath:         tempPath,
 	}
 	svc.putTransfer(state)
 
@@ -159,30 +155,26 @@ func TestReapStalledTransfers(t *testing.T) {
 	now := time.Now().UTC()
 
 	stalled := &transferState{
-		TransferStatus: TransferStatus{
-			ID:         "tx-stall",
-			AgentID:    "agent-1",
-			Direction:  "download",
-			LocalPath:  filepath.Join(t.TempDir(), "out.txt"),
-			RemotePath: "/tmp/out.txt",
-			Status:     "running",
-			CreatedAt:  now,
-		},
+		ID:              "tx-stall",
+		AgentID:         "agent-1",
+		Direction:       "download",
+		LocalPath:       filepath.Join(t.TempDir(), "out.txt"),
+		RemotePath:      "/tmp/out.txt",
+		Status:          "running",
+		CreatedAt:       now,
 		tempPath:        filepath.Join(t.TempDir(), "out.part"),
 		lastPersistedAt: now.Add(-transferStallTimeout - time.Minute),
 	}
 	svc.putTransfer(stalled)
 
 	fresh := &transferState{
-		TransferStatus: TransferStatus{
-			ID:         "tx-fresh",
-			AgentID:    "agent-1",
-			Direction:  "download",
-			LocalPath:  filepath.Join(t.TempDir(), "fresh.txt"),
-			RemotePath: "/tmp/fresh.txt",
-			Status:     "running",
-			CreatedAt:  now,
-		},
+		ID:              "tx-fresh",
+		AgentID:         "agent-1",
+		Direction:       "download",
+		LocalPath:       filepath.Join(t.TempDir(), "fresh.txt"),
+		RemotePath:      "/tmp/fresh.txt",
+		Status:          "running",
+		CreatedAt:       now,
 		tempPath:        filepath.Join(t.TempDir(), "fresh.part"),
 		lastPersistedAt: now,
 	}

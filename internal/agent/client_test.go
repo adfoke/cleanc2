@@ -35,7 +35,7 @@ func TestCacheResultPrunesExpiredAndOldest(t *testing.T) {
 		result:   protocol.TaskResult{TaskID: "expired"},
 		cachedAt: time.Now().Add(-cachedResultTTL - time.Second),
 	}
-	for i := 0; i < maxCachedResults; i++ {
+	for i := range maxCachedResults {
 		taskID := fmt.Sprintf("task-%03d", i)
 		client.results[taskID] = cachedTaskResult{
 			result:   protocol.TaskResult{TaskID: taskID},
