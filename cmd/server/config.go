@@ -15,6 +15,7 @@ import (
 func defaultServerConfig() server.Config {
 	return server.Config{
 		ListenAddr: ":8080",
+		OperatorUDSPath: "./cleanc2.sock",
 		AuthToken:  "cleanc2-dev-token",
 		DBPath:     "cleanc2.db",
 		PluginDir:  "plugins",
@@ -32,6 +33,8 @@ func loadServerConfig(args []string) (server.Config, error) {
 
 	configPath := "config.yaml"
 	listen := cfg.ListenAddr
+	operatorUDS := cfg.OperatorUDSPath
+	operatorListen := cfg.OperatorListen
 	token := cfg.AuthToken
 	apiToken := cfg.APIToken
 	dbPath := cfg.DBPath
@@ -45,9 +48,11 @@ func loadServerConfig(args []string) (server.Config, error) {
 	pingPeriod := cfg.PingPeriod
 
 	fs.StringVar(&configPath, "config", configPath, "server config yaml path")
-	fs.StringVar(&listen, "listen", listen, "http listen address")
+	fs.StringVar(&listen, "listen", listen, "agent plane listen address")
+	fs.StringVar(&operatorUDS, "operator-uds", operatorUDS, "operator plane unix socket path (empty disables, then -operator-listen is required)")
+	fs.StringVar(&operatorListen, "operator-listen", operatorListen, "also expose operator plane on TCP (token auth enforced)")
 	fs.StringVar(&token, "token", token, "shared agent token")
-	fs.StringVar(&apiToken, "api-token", apiToken, "http api/dashboard token, defaults to -token")
+	fs.StringVar(&apiToken, "api-token", apiToken, "operator plane token, defaults to -token")
 	fs.StringVar(&dbPath, "db", dbPath, "sqlite db path")
 	fs.StringVar(&pluginDir, "plugins", pluginDir, "plugin directory")
 	fs.StringVar(&tlsCert, "tls-cert", tlsCert, "tls cert file")
@@ -73,6 +78,12 @@ func loadServerConfig(args []string) (server.Config, error) {
 
 	if visited["listen"] {
 		cfg.ListenAddr = listen
+	}
+	if visited["operator-uds"] {
+		cfg.OperatorUDSPath = operatorUDS
+	}
+	if visited["operator-listen"] {
+		cfg.OperatorListen = operatorListen
 	}
 	if visited["token"] {
 		cfg.AuthToken = token

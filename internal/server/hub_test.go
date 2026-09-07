@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -121,28 +124,7 @@ func TestBatchTaskRouteTargetsByGroupIDs(t *testing.T) {
 	}
 }
 
-func TestDashboardRouteReturnsHTML(t *testing.T) {
-	svc, cleanup := newTestService(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
-	setTestAuth(req)
-	rec := httptest.NewRecorder()
-	svc.engine.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unexpected status: %d", rec.Code)
-	}
-	body, err := io.ReadAll(rec.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if !bytes.Contains(body, []byte("CleanC2 Dashboard")) {
-		t.Fatalf("unexpected body: %s", string(body))
-	}
-}
-
-func TestCheckOriginRejectsCrossSite(t *testing.T) {
+func TestCheckOriginRejectsAllBrowserHandshakes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/ws/agent", nil)
 	req.Host = "localhost:8080"
 
@@ -150,19 +132,11 @@ func TestCheckOriginRejectsCrossSite(t *testing.T) {
 		t.Fatalf("non-browser request without Origin should be allowed")
 	}
 
-	req.Header.Set("Origin", "http://localhost:8080")
-	if !checkOrigin(req) {
-		t.Fatalf("same-origin request should be allowed")
-	}
-
-	req.Header.Set("Origin", "https://evil.example.com")
-	if checkOrigin(req) {
-		t.Fatalf("cross-origin request should be rejected")
-	}
-
-	req.Header.Set("Origin", "://bad")
-	if checkOrigin(req) {
-		t.Fatalf("malformed origin should be rejected")
+	for _, origin := range []string{"http://localhost:8080", "null", "https://evil.example.com", "://bad"} {
+		req.Header.Set("Origin", origin)
+		if checkOrigin(req) {
+			t.Fatalf("request carrying Origin %q should be rejected", origin)
+		}
 	}
 }
 
@@ -202,16 +176,19 @@ func TestAgentMetricsHistoryRoute(t *testing.T) {
 	}
 }
 
-func TestDashboardRouteRequiresAuth(t *testing.T) {
+func TestDashboardRoutesGone(t *testing.T) {
 	svc, cleanup := newTestService(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
-	rec := httptest.NewRecorder()
-	svc.engine.ServeHTTP(rec, req)
+	for _, path := range []string{"/", "/dashboard"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		setTestAuth(req)
+		rec := httptest.NewRecorder()
+		svc.engine.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s should be gone, got %d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 
@@ -331,12 +308,13 @@ func newTestService(t *testing.T) (*Service, func()) {
 	t.Helper()
 
 	svc, err := New(Config{
-		ListenAddr: ":0",
-		AuthToken:  "test-token",
-		DBPath:     filepath.Join(t.TempDir(), "test.db"),
-		WriteWait:  2 * time.Second,
-		PongWait:   2 * time.Second,
-		PingPeriod: time.Second,
+		ListenAddr:     ":0",
+		OperatorListen: ":0",
+		AuthToken:      "test-token",
+		DBPath:         filepath.Join(t.TempDir(), "test.db"),
+		WriteWait:      2 * time.Second,
+		PongWait:       2 * time.Second,
+		PingPeriod:     time.Second,
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("new service: %v", err)
@@ -349,4 +327,69 @@ func newTestService(t *testing.T) (*Service, func()) {
 
 func setTestAuth(req *http.Request) {
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("admin:test-token")))
+}
+
+func TestOperatorUDSNoTokenAndMode(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "op.sock")
+	svc, err := New(Config{
+		ListenAddr:      ":0",
+		OperatorUDSPath: sock,
+		AuthToken:       "test-token",
+		DBPath:          filepath.Join(t.TempDir(), "test.db"),
+		WriteWait:       2 * time.Second,
+		PongWait:        2 * time.Second,
+		PingPeriod:      time.Second,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	defer svc.store.Close()
+
+	if err := svc.listenOperatorUDS(); err != nil {
+		t.Fatalf("bind uds: %v", err)
+	}
+	defer svc.operatorUDSrv.Close()
+
+	if fi, statErr := os.Stat(sock); statErr != nil {
+		t.Fatalf("stat socket: %v", statErr)
+	} else if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("socket perm = %o, want 600", perm)
+	}
+
+	go svc.operatorUDSrv.Serve(svc.udsListener)
+
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		},
+	}}
+	// No Authorization header: the UDS plane trusts file permissions.
+	resp, err := client.Get("http://unix/api/v1/agents")
+	if err != nil {
+		t.Fatalf("uds get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("uds status = %d body=%s, want 200", resp.StatusCode, body)
+	}
+}
+
+func TestOperatorPlaneRequiresOneListener(t *testing.T) {
+	if _, err := New(Config{ListenAddr: ":0", AuthToken: "t"}, zap.NewNop()); err == nil {
+		t.Fatalf("expected error when both operator listeners are empty")
+	}
+}
+
+func TestOperatorTCPPlaneEnforcesToken(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	rec := httptest.NewRecorder()
+	svc.engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("tokenless request on TCP operator plane = %d, want 401", rec.Code)
+	}
 }

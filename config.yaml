@@ -10,3 +10,5 @@ require_tls: false
 write_wait: "10s"
 pong_wait: "70s"
 ping_period: "25s"
+operator_uds: "./cleanc2.sock"
+operator_listen: ""

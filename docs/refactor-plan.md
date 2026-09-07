@@ -111,7 +111,13 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 2. **B2 收紧为 Unix Socket + HTTP over UDS**：删 TCP 监听，server 只开 `cleanc2.sock`。攻击面最小（无网络暴露，token 都可以省），适合「CLI 和 server 必然同机」的运维模型。保留 `-listen` flag 时退回 TCP（向后兼容远程场景）。
 3. **B3 彻底去网络层**：CLI 直接读 SQLite + 通过信号/命令队列喂 server。**否决**——写路径（派任务给在线 agent）绕不开 server 进程，等于要把整个 hub 搬进 CLI，自废架构。
 
-**决定：B2 为默认（2026-09-08 拍板）**——server 默认只监听 `./cleanc2.sock`（Unix socket），攻击面最小；`-listen` 指定时退回 TCP 监听（远程场景逃生门，此时 token 鉴权仍强制）。CLI 默认地址从 `--server` flag / `CLEANC2_SERVER` 环境变量读取，值可以是 socket 路径或 `http://host:port`，按前缀自动判别。B1（HTTP 优先）降级为逃生门形态，不再是推荐路线。
+**决定：B2 为默认（2026-09-08 拍板），实现为「双监听面」**——原 B2 提案有个洞：Agent 在远程机器上，`/ws/agent` 必须留在 TCP，否则所有 agent 掉线。修正后的拓扑：
+
+- **Agent 面**：`-listen`（默认 `:8080`）只挂 `/ws/agent` + `/healthz`，鉴权走 hello token（不变）。
+- **Operator 面**：CLI/API 专用。默认只监听 Unix socket（`-operator-uds`，默认 `./cleanc2.sock`，文件权限 `0600`，**免 token**——文件系统权限即边界，且消灭「token 躺在 config.yaml」的常态泄漏）。
+- **逃生门**：`-operator-listen <addr>` 显式指定才把 operator 面再挂一份 TCP，此时 token 鉴权强制（Bearer/Basic/X-Auth-Token 三式保留）。UDS 与 TCP 共用一个 gin engine，鉴权按配置整体启停。
+- `/` 与 `/dashboard` 随 Dashboard 一起删除；WS `CheckOrigin` 收紧为**拒绝任何携带 Origin 的握手**（浏览器 fetch 可带 `Origin: null` 打无 Origin 检查的端点，全拒才是正确姿势）。
+- CLI 地址解析：值以 `/`、`~`、`.` 开头或无 scheme 无端口 → 按 UDS 路径；`http(s)://` 前缀 → TCP。
 
 ## 5. 实施顺序（Sprint 切分）
 

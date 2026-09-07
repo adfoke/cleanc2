@@ -22,20 +22,21 @@
 - 文件传输审计
 - Agent 基础监控上报 + 指标历史（每 Agent 保留最近 1000 条）
 - 本地插件钩子
-- 内置 Web Dashboard
+- 双监听面：Agent 面（TCP `/ws/agent`）+ Operator 面（默认 Unix socket，CLI/API 专用，免 token）
 - TLS 1.3 / mTLS 参数入口
-- 跨站 WebSocket 防护（Origin 校验）
-- 恒定时间 Token 比较
+- WebSocket 握手拒绝一切带 Origin 的请求（无浏览器端）
+- 恒定时间 Token 比较（Operator 面 TCP 逃生门）
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    operator["运维人员"]
-    browser["浏览器 / Dashboard"]
+    operator["运维人员 / AI"]
+    cli["cleanc2 CLI"]
 
     subgraph server["Server"]
-        api["HTTP API / Dashboard"]
+        api["Operator 面（UDS / 可选 TCP）"]
+        agentplane["Agent 面（TCP /ws/agent）"]
         hub["WebSocket Hub"]
         dispatch["任务分发 / 目标选择"]
         transfer["文件传输管理"]
@@ -50,18 +51,21 @@ flowchart LR
         fileio["文件上传 / 下载"]
     end
 
+    sock[("cleanc2.sock")]
     db[("SQLite")]
     hook["本地插件"]
 
-    operator --> browser
-    browser --> api
+    operator --> cli
+    cli --> sock
+    sock --> api
+    agentplane <--> conn
     api --> dispatch
     api --> transfer
     api --> store
     api --> plugins
     dispatch --> hub
     transfer --> hub
-    hub <--> conn
+    hub --> agentplane
     conn --> exec
     conn --> metrics
     conn --> fileio
@@ -71,8 +75,8 @@ flowchart LR
     store --> api
 ```
 
-- 运维人员通过 Web Dashboard 或 API 操作 Server。
-- Server 负责鉴权、Agent 长连接管理、任务分发、文件传输、指标聚合和插件触发。
+- 运维人员/AI 通过 CLI 操作 Server；CLI 默认走 Unix socket（`cleanc2.sock`，0600），文件权限即访问边界。
+- Server 分两个监听面：Agent 面只挂 `/ws/agent` + `/healthz`（token 在协议内校验）；Operator 面挂全部 `/api/v1/*`。
 - Agent 主动连回 Server，执行命令，回传结果，并周期上报心跳和基础监控。
 - SQLite 持久化 Agent、任务、分组、指标和传输审计，支持离线任务补发。
 
@@ -108,21 +112,28 @@ Agent:
 ./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token
 ```
 
-## Web
+## 操作面
 
-- Server 侧操作走 Web Dashboard：`/dashboard`
-- API 和 Dashboard 都需要 token
+Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。操控 Server 走 Operator 面：
+
+- 默认 Unix socket：`./cleanc2.sock`（`-operator-uds` / `operator_uds`），权限 `0600`，**不需要 token**
+- TCP 逃生门：`-operator-listen <addr>`，启用后该面全部请求强制 token
 - 生成 token：
 
 ```bash
 openssl rand -hex 32
 ```
 
+CLI 客户端（改造 S3/S4 交付中）通过 `--server` 或 `CLEANC2_SERVER` 指向 socket 路径或 `http://host:port`。临时手工调用：
+
+```bash
+curl --unix-socket ./cleanc2.sock http://unix/api/v1/agents
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/api/v1/agents   # operator-listen 模式
+```
+
 ## API
 
-- `GET /healthz`
-- `GET /`
-- `GET /dashboard`
+- `GET /healthz`（两面各一份，响应带 `plane` 字段）
 - `GET /api/v1/agents`
 - `GET /api/v1/agents/:id/metrics`
 - `GET /api/v1/agents/:id/metrics/history`
@@ -148,6 +159,8 @@ Server:
 
 - `-config`
 - `-listen`
+- `-operator-uds`
+- `-operator-listen`
 - `-token`
 - `-api-token`
 - `-db`
@@ -175,8 +188,8 @@ Agent:
 
 ## 安全
 
-- WebSocket 握手只放行无 `Origin` 的客户端（如 Agent 这类非浏览器客户端）以及同源请求，拒绝跨站 WebSocket 劫持。
-- Token 校验使用恒定时间比较，避免时序侧信道。
+- WebSocket 握手拒绝一切携带 `Origin` 头的请求（Dashboard 已移除，合法 Agent 不发 `Origin`；含 `Origin: null` 在内的浏览器请求一律拒绝）。
+- Operator 面默认只监听 Unix socket（`0600`），访问边界是文件系统权限；Token 校验使用恒定时间比较，避免时序侧信道（TCP 逃生门启用时）。
 - 文件传输按 `Seq` 重排并校验缺包/重复，配合 SHA256 兜底校验完整性。
 - 生产环境务必启用 TLS：Server 配置 `tls_cert` / `tls_key`（可选 `client_ca` 开启 mTLS），Agent 使用 `wss://` 并配置 `-ca-cert` / `-client-cert` / `-client-key`。
 - 未启用 TLS 时 Server 与 Agent 都会打印警告；Server 可用 `-require-tls` 强制拒绝在无 TLS 配置时启动。

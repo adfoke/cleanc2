@@ -10,9 +10,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,8 +33,13 @@ type Service struct {
 	logger  *zap.Logger
 	store   *Store
 	plugins *PluginManager
-	engine  *gin.Engine
-	httpSrv *http.Server
+
+	agentEngine   *gin.Engine // /ws/agent + /healthz, token auth via hello
+	engine        *gin.Engine // operator plane: CLI/API
+	httpSrv       *http.Server
+	operatorSrv   *http.Server // optional TCP escape hatch
+	operatorUDSrv *http.Server // Unix socket, no token (file mode 0600)
+	udsListener   net.Listener
 
 	mu         sync.RWMutex
 	clients    map[string]*agentConn
@@ -96,18 +102,12 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: checkOrigin,
 }
 
-// checkOrigin rejects cross-site WebSocket requests while still allowing
-// non-browser clients (such as the Go agent) that send no Origin header.
+// checkOrigin rejects every WebSocket handshake that carries an Origin
+// header. There is no browser UI anymore: legitimate agents send no Origin,
+// while any browser-originated request (including fetch with "Origin: null")
+// is hostile by definition.
 func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(u.Host, r.Host)
+	return r.Header.Get("Origin") == ""
 }
 
 func New(cfg Config, logger *zap.Logger) (*Service, error) {
@@ -116,6 +116,9 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 	}
 	if cfg.AuthToken == "" {
 		return nil, errors.New("auth token is required")
+	}
+	if cfg.OperatorUDSPath == "" && cfg.OperatorListen == "" {
+		return nil, errors.New("operator plane requires -operator-uds and/or -operator-listen")
 	}
 	if cfg.APIToken == "" {
 		cfg.APIToken = cfg.AuthToken
@@ -149,10 +152,17 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 		return nil, err
 	}
 	svc.plugins = plugins
-	svc.engine = svc.routes()
+	svc.agentEngine = svc.agentRoutes()
+	svc.engine = svc.operatorRoutes()
 	svc.httpSrv = &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: svc.engine,
+		Handler: svc.agentEngine,
+	}
+	if cfg.OperatorListen != "" {
+		svc.operatorSrv = &http.Server{
+			Addr:    cfg.OperatorListen,
+			Handler: svc.engine,
+		}
 	}
 
 	tlsCfg, err := buildServerTLSConfig(cfg)
@@ -161,6 +171,9 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 	}
 	if tlsCfg != nil {
 		svc.httpSrv.TLSConfig = tlsCfg
+		if svc.operatorSrv != nil {
+			svc.operatorSrv.TLSConfig = tlsCfg
+		}
 	}
 	if cfg.RequireTLS && tlsCfg == nil {
 		return nil, errors.New("require_tls is set but no TLS certificate configured (tls_cert/tls_key)")
@@ -170,13 +183,79 @@ func New(cfg Config, logger *zap.Logger) (*Service, error) {
 }
 
 func (s *Service) Run() error {
-	s.logger.Info("server listening", zap.String("addr", s.cfg.ListenAddr))
+	if err := s.listenOperatorUDS(); err != nil {
+		return err
+	}
+
+	s.logger.Info("agent plane listening", zap.String("addr", s.cfg.ListenAddr))
+	if s.cfg.OperatorUDSPath != "" {
+		s.logger.Info("operator plane listening", zap.String("uds", s.cfg.OperatorUDSPath))
+	}
+	if s.operatorSrv != nil {
+		s.logger.Warn("operator plane exposed on TCP; token auth is enforced", zap.String("addr", s.cfg.OperatorListen))
+	}
+
 	go s.reapLoop()
+
+	errCh := make(chan error, 3)
+	go func() { errCh <- serveAgent(s) }()
+	if s.udsListener != nil {
+		go func() { errCh <- s.operatorUDSrv.Serve(s.udsListener) }()
+	}
+	if s.operatorSrv != nil {
+		go func() {
+			var err error
+			if s.operatorSrv.TLSConfig != nil {
+				err = s.operatorSrv.ListenAndServeTLS(s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
+			} else {
+				err = s.operatorSrv.ListenAndServe()
+			}
+			errCh <- err
+		}()
+	}
+	return <-errCh
+}
+
+func serveAgent(s *Service) error {
 	if s.httpSrv.TLSConfig != nil {
 		return s.httpSrv.ListenAndServeTLS(s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
 	}
 	s.logger.Warn("server is running without TLS; agent traffic and tokens are unencrypted. Configure tls_cert/tls_key (and optionally client_ca) for production.")
 	return s.httpSrv.ListenAndServe()
+}
+
+// listenOperatorUDS prepares the Unix socket for the operator plane. A
+// leftover socket file from a previous crashed run is removed first; the
+// live bind below then recreates it with 0600.
+func (s *Service) listenOperatorUDS() error {
+	path := s.cfg.OperatorUDSPath
+	if path == "" {
+		return nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		if probe, dialErr := net.DialTimeout("unix", path, 500*time.Millisecond); dialErr == nil {
+			probe.Close()
+			return fmt.Errorf("operator socket %s is already in use by a live server", path)
+		}
+		if rmErr := os.Remove(path); rmErr != nil {
+			return fmt.Errorf("remove stale operator socket: %w", rmErr)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create operator socket dir: %w", err)
+	}
+
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return fmt.Errorf("listen operator uds: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		ln.Close()
+		return fmt.Errorf("chmod operator socket: %w", err)
+	}
+	s.udsListener = ln
+	s.operatorUDSrv = &http.Server{Handler: s.engine}
+	return nil
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
@@ -185,20 +264,44 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	case <-s.reaperDone:
 	case <-ctx.Done():
 	}
-	defer s.store.Close()
-	return s.httpSrv.Shutdown(ctx)
+	if s.operatorUDSrv != nil {
+		_ = s.operatorUDSrv.Shutdown(ctx)
+	}
+	if s.operatorSrv != nil {
+		_ = s.operatorSrv.Shutdown(ctx)
+	}
+	err := s.httpSrv.Shutdown(ctx)
+	if s.cfg.OperatorUDSPath != "" {
+		_ = os.Remove(s.cfg.OperatorUDSPath)
+	}
+	s.store.Close()
+	return err
 }
 
-func (s *Service) routes() *gin.Engine {
+// agentRoutes serves the agent-facing plane: only the WebSocket uplink and
+// a liveness probe. Agents authenticate inside the protocol (hello token).
+func (s *Service) agentRoutes() *gin.Engine {
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+
+	engine.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "plane": "agent"})
+	})
+	engine.GET("/ws/agent", s.handleAgentWS)
+	return engine
+}
+
+// operatorRoutes serves the CLI/API plane. Whether token auth applies is
+// decided once per server (see requireOperatorAuth): on the Unix socket the
+// filesystem is the boundary, on the TCP escape hatch the token is not
+// optional.
+func (s *Service) operatorRoutes() *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(s.requireOperatorAuth())
 
-	engine.GET("/", s.handleDashboard)
-	engine.GET("/dashboard", s.handleDashboard)
-
 	engine.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"ok": true})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "plane": "operator"})
 	})
 
 	engine.GET("/api/v1/agents", func(c *gin.Context) {
@@ -456,7 +559,6 @@ func (s *Service) routes() *gin.Engine {
 		c.JSON(http.StatusOK, transfers)
 	})
 
-	engine.GET("/ws/agent", s.handleAgentWS)
 	return engine
 }
 
@@ -628,13 +730,12 @@ func (s *Service) sendTaskCancel(task protocol.Task) error {
 }
 
 func (s *Service) requireOperatorAuth() gin.HandlerFunc {
+	// The Unix socket carries no token: file permission 0600 is the access
+	// boundary. Once the TCP escape hatch is enabled, every request on the
+	// operator plane must prove the token.
+	authRequired := s.cfg.OperatorListen != "" || s.cfg.OperatorUDSPath == ""
 	return func(c *gin.Context) {
-		switch c.Request.URL.Path {
-		case "/healthz", "/ws/agent":
-			c.Next()
-			return
-		}
-		if s.authorizedOperator(c.Request) {
+		if !authRequired || s.authorizedOperator(c.Request) {
 			c.Next()
 			return
 		}
