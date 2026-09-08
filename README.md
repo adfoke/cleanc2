@@ -91,6 +91,7 @@ flowchart LR
 mkdir -p ./bin
 go build -o ./bin/server ./cmd/server
 go build -o ./bin/agent ./cmd/agent
+go build -o ./bin/cleanc2 ./cmd/cli
 ```
 
 测试：
@@ -119,19 +120,26 @@ Agent:
 ./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token
 ```
 
-## 操作面
+## 操作面（CLI）
 
-Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。操控 Server 走 Operator 面：
-
-- 默认 Unix socket：`./cleanc2.sock`（`-operator-uds` / `operator_uds`），权限 `0600`，**不需要 token**
-- TCP 逃生门：`-operator-listen <addr>`，启用后该面全部请求强制 token
-- 生成 token：
+Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。一切操控走 `cleanc2` CLI：
 
 ```bash
-openssl rand -hex 32
+./bin/cleanc2 health                     # 连通性自检
+./bin/cleanc2 agents list --online       # 在线 agent
+./bin/cleanc2 schema                     # 机器可读命令全表（AI 从这里学 CLI）
+./bin/cleanc2 metrics overview
 ```
 
-CLI 客户端（改造 S3/S4 交付中）通过 `--server` 或 `CLEANC2_SERVER` 指向 socket 路径或 `http://host:port`。临时手工调用：
+AI 友好约定：stdout 只输出紧凑 JSON（`--pretty` 缩进），错误 JSON 走 stderr；退出码稳定 —— `0` 成功 / `1` 服务端或任务失败 / `2` 连不上 / `3` 鉴权失败 / `4` 用法错误；任何命令不交互、不 spinner；全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可出现在 argv 任意位置。
+
+Server 的 Operator 面拓扑：
+
+- 默认 Unix socket：`./cleanc2.sock`（`-operator-uds` / `operator_uds`），权限 `0600`，**不需要 token**（文件权限即边界）
+- TCP 逃生门：`-operator-listen <addr>`，启用后该面全部请求强制 token（生成：`openssl rand -hex 32`）
+- CLI 目标解析：`-server` / `CLEANC2_SERVER`，值以路径形式给（`./x.sock`、`/var/x.sock`）走 socket，`http(s)://` 走 TCP；token 走 `CLEANC2_TOKEN`
+
+手工调试（CLI 之下的裸 API）：
 
 ```bash
 curl --unix-socket ./cleanc2.sock http://unix/api/v1/agents

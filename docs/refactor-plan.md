@@ -126,7 +126,7 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 | S0 | Go 1.27 + go fix + modernization | build/vet/test 全绿，独立 commit |
 | S1 | 删 dashboard + 路由清理 + WS Origin 收紧 + README/API 文档同步 | `go test ./...` 绿；`/dashboard` 返回 404 的回归测试 |
 | S2 | ✅ 已完成 | proto/ + pb 生成码入库；双栈按 opcode 自描述，hello 协商；对拍/协商 e2e 齐；突变五连（丢字段、截数据、三处翻转逻辑）全命中 |
-| S3 | CLI 骨架（serve 搬迁 + health + agents/groups/tasks 只读命令 + schema） | 每命令 JSON 输出快照测试；退出码测试 |
+| S3 | ✅ 已完成 | `cmd/cli`→`bin/cleanc2`：health + agents(list/get/metrics/history) + groups(list/get) + tasks(list/get) + metrics overview + transfers + plugins + schema；全局 flag 任意位置（hoist）；退出码 0/1/2/3/4；测试 10 项 + 突变（auth 映射、k=v filter 正例——首版假绿已补） |
 | S4 | run --wait / push / pull 写路径 + 危险操作 --yes | 起一个进程内嵌 server 的端到端测试（现有 hub_test 模式可复用） |
 | S5 | `docs/ai-usage.md` + 收尾 | 拿真实 LLM agent 用 `schema` 输出现场跑一轮 `run --wait` 冒烟 |
 
