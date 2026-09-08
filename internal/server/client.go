@@ -202,7 +202,12 @@ func (a *agentConn) sendMessage(msgType string, payload any) error {
 	select {
 	case a.send <- frame:
 		return nil
-	default:
+	case <-a.done:
+		// Connection is going away: fail instead of queueing frames that
+		// nobody will ever write. (The old `default:` branch dropped
+		// frames whenever the 16-deep queue was full, which silently
+		// killed every file transfer over ~4 MB — the writeLoop lags the
+		// TCP sender on real links, and upload pumps outran it.)
 		return websocket.ErrCloseSent
 	}
 }

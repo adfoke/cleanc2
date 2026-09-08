@@ -200,6 +200,7 @@ func TestDispatchMarksTaskDispatchedOnSend(t *testing.T) {
 	svc.clients["agent-1"] = &agentConn{
 		id:      "agent-1",
 		send:    make(chan wsFrame, 1),
+		done:    make(chan struct{}),
 		service: svc,
 	}
 
@@ -458,5 +459,68 @@ func TestGroupCreateResponseCarriesMemberCount(t *testing.T) {
 	}
 	if group.MemberCount != 2 || len(group.AgentIDs) != 2 {
 		t.Fatalf("create ack must report real membership, got %+v", group)
+	}
+}
+
+func TestSendMessageBackpressuresInsteadOfDropping(t *testing.T) {
+	// Regression: the old `default:` branch returned ErrCloseSent the
+	// moment the 16-deep queue filled, silently killing any transfer
+	// larger than the buffer (live-proven over WAN: >4MB pushes died at
+	// non-deterministic offsets). send must block until the writeLoop
+	// catches up, and only fail fast once the connection is closing.
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	a := &agentConn{
+		id:      "slow-agent",
+		send:    make(chan wsFrame, 2),
+		done:    make(chan struct{}),
+		service: svc,
+	}
+	a.send <- wsFrame{opcode: protocol.FrameText, data: []byte("busy-1")}
+	a.send <- wsFrame{opcode: protocol.FrameText, data: []byte("busy-2")}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- a.sendMessage(protocol.TypeTaskDispatch, protocol.Task{ID: "t-blocked"})
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("send returned %v while queue full: frame was dropped, want block", err)
+	case <-time.After(100 * time.Millisecond):
+		// still blocked: correct backpressure
+	}
+
+	<-a.send // drain one slot
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("send after drain: %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send never completed after drain")
+	}
+
+	// Closing the connection must release a blocked send immediately.
+	// Queue currently holds busy-2 + t-blocked; drain both so the next
+	// two direct pushes fill it to exactly capacity without blocking.
+	<-a.send
+	<-a.send
+	a.send <- wsFrame{opcode: protocol.FrameText, data: []byte("full-1")}
+	a.send <- wsFrame{opcode: protocol.FrameText, data: []byte("full-2")}
+	blocked := make(chan error, 1)
+	go func() {
+		blocked <- a.sendMessage(protocol.TypeTaskDispatch, protocol.Task{ID: "t-closed"})
+	}()
+	time.Sleep(30 * time.Millisecond)
+	close(a.done)
+	select {
+	case err := <-blocked:
+		if err == nil {
+			t.Fatal("send after close(done) should error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked send did not escape via done")
 	}
 }
