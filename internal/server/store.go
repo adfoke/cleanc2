@@ -11,7 +11,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 type AgentState struct {
@@ -88,7 +88,7 @@ const maxAgentMetricsHistory = 1000
 
 func NewStore(path string) (*Store, error) {
 	if path == "" {
-		path = "cleanc2.db"
+		path = "coc2.db"
 	}
 	if err := ensureParentDir(path); err != nil {
 		return nil, err

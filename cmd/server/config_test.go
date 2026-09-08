@@ -61,10 +61,10 @@ func TestLoadServerConfigWithoutYAMLUsesDefaults(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
-	if cfg.ListenAddr != ":8080" || cfg.AuthToken != "cleanc2-dev-token" {
+	if cfg.ListenAddr != ":8080" || cfg.AuthToken != "coc2-dev-token" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if cfg.DBPath != "cleanc2.db" || cfg.PluginDir != "plugins" {
+	if cfg.DBPath != "coc2.db" || cfg.PluginDir != "plugins" {
 		t.Fatalf("unexpected default paths: %+v", cfg)
 	}
 }

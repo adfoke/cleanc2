@@ -1,4 +1,4 @@
-module cleanc2
+module coc2
 
 go 1.27
 

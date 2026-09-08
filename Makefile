@@ -1,4 +1,4 @@
-# CleanC2 — 日常构建入口。
+# CoC2 — 日常构建入口。
 # 默认使用仓库本地的 Go 缓存（?= 语义，可被环境或命令行覆盖）：
 #   GOCACHE=/tmp/x make build   # 换缓存目录
 #   make lint test check        # 组合目标
@@ -19,11 +19,11 @@ GO_SRCS   := $(shell find $(GO_DIRS) -name '*.go' ! -path '$(GEN_PATTERNS)/*')
 
 all: build ## 默认目标，等同 build
 
-build: ## 编译三个二进制到 ./bin（server / agent / cleanc2）
+build: ## 编译三个二进制到 ./bin（server / agent / coc2）
 	mkdir -p bin
 	$(GO) build -o ./bin/server ./cmd/server
 	$(GO) build -o ./bin/agent ./cmd/agent
-	$(GO) build -o ./bin/cleanc2 ./cmd/cli
+	$(GO) build -o ./bin/coc2 ./cmd/cli
 
 test: ## go test ./...
 	$(GO) test ./...
@@ -50,9 +50,9 @@ lint: fmt-check vet ## fmt-check + vet
 proto: ## 重新生成 protobuf 码（委托 scripts/gen-proto.sh）
 	./scripts/gen-proto.sh
 
-clean: ## 删除 ./bin、仓库根 cleanc2.sock 与 *.db*（不碰 .gocache_local/.gomodcache_local、源码、git）
+clean: ## 删除 ./bin、仓库根 coc2.sock 与 *.db*（不碰 .gocache_local/.gomodcache_local、源码、git）
 	rm -rf bin
-	rm -f cleanc2.sock
+	rm -f coc2.sock
 	find . -maxdepth 1 -type f -name '*.db*' -delete
 
 check: lint test ## 提交前一条龙：lint + test

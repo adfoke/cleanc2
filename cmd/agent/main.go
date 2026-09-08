@@ -11,14 +11,14 @@ import (
 
 	"go.uber.org/zap"
 
-	"cleanc2/internal/agent"
+	"coc2/internal/agent"
 )
 
 func main() {
 	cfg := agent.Config{}
 	var tags string
 	flag.StringVar(&cfg.ServerURL, "server", "ws://127.0.0.1:8080/ws/agent", "server websocket url")
-	flag.StringVar(&cfg.Token, "token", "cleanc2-dev-token", "shared agent token")
+	flag.StringVar(&cfg.Token, "token", "coc2-dev-token", "shared agent token")
 	flag.StringVar(&cfg.AgentID, "agent-id", "", "agent id")
 	flag.StringVar(&tags, "tags", "", "comma separated tags")
 	flag.DurationVar(&cfg.HeartbeatInterval, "heartbeat", 30*time.Second, "heartbeat interval")

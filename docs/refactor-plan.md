@@ -1,4 +1,4 @@
-# CleanC2 改造方案 v2 —— CLI-first + Protobuf
+# CoC2 改造方案 v2 —— CLI-first + Protobuf
 
 > 状态：**v1 已拍板（2026-09-08）**。三项决定：① Protobuf 走 A1 全量替换；② 控制面走 B2（Unix socket 为默认，`-listen` 保留 TCP 逃生门）；③ CLI 为独立二进制，不与 server 合并成单二进制双角色。
 
@@ -22,7 +22,7 @@
 
 ### 2.1 形态
 
-新增 `cmd/cli`，产物 `./bin/cleanc2`。单二进制双角色：`cleanc2 serve` 启动服务端，其余子命令是操控端。Agent 保持独立二进制（要分发到被控机，不能拖 CLI 的依赖）。
+新增 `cmd/cli`，产物 `./bin/coc2`。单二进制双角色：`coc2 serve` 启动服务端，其余子命令是操控端。Agent 保持独立二进制（要分发到被控机，不能拖 CLI 的依赖）。
 
 ### 2.2 AI 友好的硬性要求
 
@@ -31,25 +31,25 @@
 | 输出可解析 | 默认 JSON（紧凑单对象）；批量列表走 NDJSON 到 stdout；人类格式只在显式 `--pretty` 时给 |
 | 错误可判定 | 稳定退出码：`0` 成功 / `1` 任务失败 / `2` 连接失败 / `3` 鉴权失败 / `4` 参数错误；错误也输出 JSON（`{"error":{"code","message"}}`），永远不往 stdout 掺日志 |
 | 无交互 | 任何子命令不追问、无 TTY 检测、无进度条 spinner；长任务用 `--wait` 阻塞到终态一次性返回 |
-| 可自描述 | `cleanc2 schema` 输出全部命令+参数的 JSON 规格，AI 拉一次就能学会整套 CLI（等价于给 agent 的 man page） |
-| 配置走环境 | `CLEANC2_SERVER` / `CLEANC2_TOKEN` 环境变量兜底，flag 可覆盖；token 不出现在命令行回显里 |
+| 可自描述 | `coc2 schema` 输出全部命令+参数的 JSON 规格，AI 拉一次就能学会整套 CLI（等价于给 agent 的 man page） |
+| 配置走环境 | `COC2_SERVER` / `COC2_TOKEN` 环境变量兜底，flag 可覆盖；token 不出现在命令行回显里 |
 | 幂等与安全 | 危险操作（批量下发、删除）要求显式 `--yes`；任务创建返回 `task_id`，重复 cancel 不报错 |
 
 ### 2.3 命令面（v1 范围）
 
 ```
-cleanc2 serve            -config ...              # 原 server
-cleanc2 health                                     # 连通性+鉴权自检
-cleanc2 agents list [--filter tag=x] / get <id> / history <id>
-cleanc2 groups list / create / add / remove
-cleanc2 run --cmd "uptime" --agents id1,id2 | --group g1 | --tag k=v
+coc2 serve            -config ...              # 原 server
+coc2 health                                     # 连通性+鉴权自检
+coc2 agents list [--filter tag=x] / get <id> / history <id>
+coc2 groups list / create / add / remove
+coc2 run --cmd "uptime" --agents id1,id2 | --group g1 | --tag k=v
           [--timeout 30] [--wait]                  # 创建任务；--wait 阻塞收结果
-cleanc2 tasks list / get <id> / cancel <id>        # get --wait 同样可阻塞
-cleanc2 push --agent <id> --local f --remote p [--wait]
-cleanc2 pull --agent <id> --remote p --local f [--wait]
-cleanc2 transfers list / get <id>
-cleanc2 metrics get <id> / history <id> / overview
-cleanc2 schema                                     # 机器可读命令规格
+coc2 tasks list / get <id> / cancel <id>        # get --wait 同样可阻塞
+coc2 push --agent <id> --local f --remote p [--wait]
+coc2 pull --agent <id> --remote p --local f [--wait]
+coc2 transfers list / get <id>
+coc2 metrics get <id> / history <id> / overview
+coc2 schema                                     # 机器可读命令规格
 ```
 
 `run --wait` 的结果聚合格式（这是 AI 运维闭环的关键输出）：
@@ -91,7 +91,7 @@ cleanc2 schema                                     # 机器可读命令规格
 ### 落点结构
 
 ```
-proto/cleanc2/v1/wire.proto     # AgentHello/Task/TaskResult/FileTransfer* 等全部消息
+proto/coc2/v1/wire.proto     # AgentHello/Task/TaskResult/FileTransfer* 等全部消息
 internal/protocol/              # 手写层保留：Envelope 路由、协商
 internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-proto.sh，Makefile 入口）
 ```
@@ -108,13 +108,13 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 控制面剩下三个选项：
 
 1. **B1 保留 HTTP JSON API（推荐）**：CLI 走 `http://host:port/api/v1`。改动最小，API 已有全套实现和 token 鉴权；远程操控天然可用；curl 可直接调试。
-2. **B2 收紧为 Unix Socket + HTTP over UDS**：删 TCP 监听，server 只开 `cleanc2.sock`。攻击面最小（无网络暴露，token 都可以省），适合「CLI 和 server 必然同机」的运维模型。保留 `-listen` flag 时退回 TCP（向后兼容远程场景）。
+2. **B2 收紧为 Unix Socket + HTTP over UDS**：删 TCP 监听，server 只开 `coc2.sock`。攻击面最小（无网络暴露，token 都可以省），适合「CLI 和 server 必然同机」的运维模型。保留 `-listen` flag 时退回 TCP（向后兼容远程场景）。
 3. **B3 彻底去网络层**：CLI 直接读 SQLite + 通过信号/命令队列喂 server。**否决**——写路径（派任务给在线 agent）绕不开 server 进程，等于要把整个 hub 搬进 CLI，自废架构。
 
 **决定：B2 为默认（2026-09-08 拍板），实现为「双监听面」**——原 B2 提案有个洞：Agent 在远程机器上，`/ws/agent` 必须留在 TCP，否则所有 agent 掉线。修正后的拓扑：
 
 - **Agent 面**：`-listen`（默认 `:8080`）只挂 `/ws/agent` + `/healthz`，鉴权走 hello token（不变）。
-- **Operator 面**：CLI/API 专用。默认只监听 Unix socket（`-operator-uds`，默认 `./cleanc2.sock`，文件权限 `0600`，**免 token**——文件系统权限即边界，且消灭「token 躺在 config.yaml」的常态泄漏）。
+- **Operator 面**：CLI/API 专用。默认只监听 Unix socket（`-operator-uds`，默认 `./coc2.sock`，文件权限 `0600`，**免 token**——文件系统权限即边界，且消灭「token 躺在 config.yaml」的常态泄漏）。
 - **逃生门**：`-operator-listen <addr>` 显式指定才把 operator 面再挂一份 TCP，此时 token 鉴权强制（Bearer/Basic 两式；Web 清理轮又砍掉了零调用方的 X-Auth-Token 头与 WWW-Authenticate 响应头）。UDS 与 TCP 共用一个 gin engine，鉴权按配置整体启停。
 - `/` 与 `/dashboard` 随 Dashboard 一起删除；WS `CheckOrigin` 收紧为**拒绝任何携带 Origin 的握手**（浏览器 fetch 可带 `Origin: null` 打无 Origin 检查的端点，全拒才是正确姿势）。
 - CLI 地址解析：值以 `/`、`~`、`.` 开头或无 scheme 无端口 → 按 UDS 路径；`http(s)://` 前缀 → TCP。
@@ -126,7 +126,7 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 | S0 | Go 1.27 + go fix + modernization | build/vet/test 全绿，独立 commit |
 | S1 | 删 dashboard + 路由清理 + WS Origin 收紧 + README/API 文档同步 | `go test ./...` 绿；`/dashboard` 返回 404 的回归测试 |
 | S2 | ✅ 已完成 | proto/ + pb 生成码入库；双栈按 opcode 自描述，hello 协商；对拍/协商 e2e 齐；突变五连（丢字段、截数据、三处翻转逻辑）全命中 |
-| S3 | ✅ 已完成 | `cmd/cli`→`bin/cleanc2`：health + agents(list/get/metrics/history) + groups(list/get) + tasks(list/get) + metrics overview + transfers + plugins + schema；全局 flag 任意位置（hoist）；退出码 0/1/2/3/4；测试 10 项 + 突变（auth 映射、k=v filter 正例——首版假绿已补） |
+| S3 | ✅ 已完成 | `cmd/cli`→`bin/coc2`：health + agents(list/get/metrics/history) + groups(list/get) + tasks(list/get) + metrics overview + transfers + plugins + schema；全局 flag 任意位置（hoist）；退出码 0/1/2/3/4；测试 10 项 + 突变（auth 映射、k=v filter 正例——首版假绿已补） |
 | S4 | ✅ 已完成 | run(--wait/--yes 闸门/exec-timeout)、tasks cancel、groups create/add/remove（读-改-写）、push/pull(--wait 轮询 transfer 终态)；fake 轮询依赖化后突变三连（--yes 闸门、失败映射、transfer 终态判定）全命中；真机 e2e：run --wait 成败/cancel 打进程树/push+pull 字节回环 |
 | S5 | ✅ 已完成 | `docs/ai-usage.md`；blind agent 实测（只喂 schema.json、禁读源码/文档）7 步全通，挖出 4 个真缺陷全修复：① exec-timeout flag 因并行 Edit 假落盘根本不存在（静默失传）→ 修复+描述写明秒/毫秒语义；② 空列表 JSON `null` → store/plugins 6 处改 `make(...,0,n)` + 回归测试；③ groups create 回包 member_count 撒谎 → 补 len()；④ --yes/schema 语义含糊 → schema 描述收紧。agent 报告逐条实跑复核后才修（不轻信子代理） |
 

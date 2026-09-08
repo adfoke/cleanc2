@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"cleanc2/internal/common"
-	"cleanc2/internal/protocol"
+	"coc2/internal/common"
+	"coc2/internal/protocol"
 )
 
 const (

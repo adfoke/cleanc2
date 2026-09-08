@@ -4,6 +4,6 @@
 set -eu
 cd "$(dirname "$0")/.."
 protoc --proto_path=proto \
-  --go_out=. --go_opt=module=cleanc2 \
-  proto/cleanc2/v1/wire.proto
+  --go_out=. --go_opt=module=coc2 \
+  proto/coc2/v1/wire.proto
 gofmt -l internal/protocol/pb

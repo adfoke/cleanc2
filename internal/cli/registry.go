@@ -107,17 +107,17 @@ func (r *Registry) find(name string) *Command {
 	return nil
 }
 
-// DefaultTarget resolves the operator plane endpoint: env > ./cleanc2.sock.
+// DefaultTarget resolves the operator plane endpoint: env > ./coc2.sock.
 func DefaultTarget() string {
-	if v := os.Getenv("CLEANC2_SERVER"); v != "" {
+	if v := os.Getenv("COC2_SERVER"); v != "" {
 		return v
 	}
-	return "./cleanc2.sock"
+	return "./coc2.sock"
 }
 
 // DefaultToken reads the bearer token from the environment.
 func DefaultToken() string {
-	return os.Getenv("CLEANC2_TOKEN")
+	return os.Getenv("COC2_TOKEN")
 }
 
 // Run executes the registry with CLI args and returns the process exit code.
@@ -170,7 +170,7 @@ func (r *Registry) RunWithIO(args []string, stdout, stderr io.Writer) int {
 
 // parseGlobals accepts global flags in one pass and reports leftovers.
 func (r *Registry) parseGlobals(g *Globals, args []string) error {
-	fs := flag.NewFlagSet("cleanc2", flag.ContinueOnError)
+	fs := flag.NewFlagSet("coc2", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&g.Server, "server", DefaultTarget(), "operator plane: unix socket path or http(s):// URL")
 	fs.StringVar(&g.Token, "token", DefaultToken(), "operator token (needed with the TCP operator plane)")
@@ -241,9 +241,9 @@ func (r *Registry) parseCommandFlags(cmd *Command, args []string) (*CmdFlags, er
 // usage prints the command list; returns exit code 0.
 func (r *Registry) usage(g *Globals) int {
 	out := map[string]any{
-		"usage":    "cleanc2 [-server <uds|url>] [-token <t>] <command> [flags]",
+		"usage":    "coc2 [-server <uds|url>] [-token <t>] <command> [flags]",
 		"commands": r.commandNames(),
-		"note":     "run `cleanc2 schema` for the full machine-readable command spec",
+		"note":     "run `coc2 schema` for the full machine-readable command spec",
 	}
 	_ = Emit(g.Stdout, out, g.Pretty)
 	return ExitOK
@@ -265,15 +265,15 @@ func (r *Registry) emitSchema(g *Globals) int {
 		Commands    []*Command     `json:"commands"`
 	}
 	doc := schemaDoc{
-		Name:    "cleanc2",
+		Name:    "coc2",
 		Version: "1",
 		ExitCodes: map[string]int{
 			"ok": ExitOK, "failure": ExitFailure, "connect": ExitConnect,
 			"auth": ExitAuth, "usage": ExitUsage,
 		},
 		GlobalFlags: []FlagSpec{
-			{Name: "server", Type: "string", Default: DefaultTarget(), Desc: "operator plane unix socket path or http(s) URL; env CLEANC2_SERVER"},
-			{Name: "token", Type: "string", Desc: "bearer token for the TCP operator plane; env CLEANC2_TOKEN"},
+			{Name: "server", Type: "string", Default: DefaultTarget(), Desc: "operator plane unix socket path or http(s) URL; env COC2_SERVER"},
+			{Name: "token", Type: "string", Desc: "bearer token for the TCP operator plane; env COC2_TOKEN"},
 			{Name: "pretty", Type: "bool", Desc: "indent JSON"},
 			{Name: "timeout", Type: "duration", Default: "30s", Desc: "HTTP timeout"},
 			{Name: "insecure", Type: "bool", Desc: "skip TLS verification"},

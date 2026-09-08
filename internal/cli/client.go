@@ -1,4 +1,4 @@
-// Package cli implements the cleanc2 operator command line client. It is
+// Package cli implements the coc2 operator command line client. It is
 // designed for programmatic use: compact JSON on stdout, JSON errors on
 // stderr, stable exit codes, and no interactive prompts.
 package cli

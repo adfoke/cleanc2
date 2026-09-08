@@ -1,8 +1,8 @@
-# CleanC2
+# CoC2
 
 面向合法运维场景的轻量服务器批量管理系统：一个 Server、N 台 Agent、一个为 AI 而生的 CLI。
 
-- **AI-native 操控面** —— 没有 Dashboard。一切操作走 `cleanc2` CLI：stdout 纯 JSON、稳定退出码、`cleanc2 schema` 自描述，LLM Agent 拿起来就能用（[契约全文](docs/ai-usage.md)）。
+- **AI-native 操控面** —— 没有 Dashboard。一切操作走 `coc2` CLI：stdout 纯 JSON、稳定退出码、`coc2 schema` 自描述，LLM Agent 拿起来就能用（[契约全文](docs/ai-usage.md)）。
 - **零信任边界清晰** —— Agent 拨出长连接（被控机不需要开任何入站端口）；Operator 面默认 Unix socket，文件权限即访问边界。
 - **小** —— 纯 Go，三个静态二进制，SQLite 单文件持久化，无外部依赖服务。
 
@@ -11,12 +11,12 @@
 ## 30 秒上手
 
 ```bash
-make build                                    # 产出 bin/{server,agent,cleanc2}
+make build                                    # 产出 bin/{server,agent,coc2}
 
-./bin/server -config ./config.yaml            # Agent 面 :8080；Operator 面 ./cleanc2.sock
-./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token &
+./bin/server -config ./config.yaml            # Agent 面 :8080；Operator 面 ./coc2.sock
+./bin/agent -server ws://127.0.0.1:8080/ws/agent -token coc2-dev-token &
 
-./bin/cleanc2 run --cmd "uptime" --agents <agent_id> --wait
+./bin/coc2 run --cmd "uptime" --agents <agent_id> --wait
 ```
 
 输出即结果：
@@ -40,7 +40,7 @@ make build                                    # 产出 bin/{server,agent,cleanc2
 
 **连接与协议**
 - Agent 主动拨出 WebSocket，指数退避重连；心跳维护在线状态
-- 线协议 Protobuf 二进制帧（[wire.proto](proto/cleanc2/v1/wire.proto) 是单一事实源），与旧 JSON 帧按 hello 协商共存，老 Agent 不掉线
+- 线协议 Protobuf 二进制帧（[wire.proto](proto/coc2/v1/wire.proto) 是单一事实源），与旧 JSON 帧按 hello 协商共存，老 Agent 不掉线
 - TLS 1.3 / mTLS 可选，跨站 WebSocket 握手全拒
 
 **平台**
@@ -54,7 +54,7 @@ make build                                    # 产出 bin/{server,agent,cleanc2
 ```mermaid
 flowchart LR
     operator["运维人员 / AI"]
-    cli["cleanc2 CLI"]
+    cli["coc2 CLI"]
 
     subgraph server["Server"]
         api["Operator 面（UDS / 可选 TCP）"]
@@ -73,7 +73,7 @@ flowchart LR
         fileio["文件上传 / 下载"]
     end
 
-    sock[("cleanc2.sock")]
+    sock[("coc2.sock")]
     db[("SQLite")]
     hook["本地插件"]
 
@@ -102,7 +102,7 @@ flowchart LR
 | 平面 | 端点 | 谁在用 | 鉴权 |
 |---|---|---|---|
 | Agent 面 | `-listen`（默认 `:8080`）的 `/ws/agent` + `/healthz` | 被控机上的 Agent | 协议内 hello token（恒定时间比较） |
-| Operator 面 | 默认 Unix socket `./cleanc2.sock`（`0600`）；`-operator-listen` 可额外挂 TCP | CLI / 脚本 / AI | socket 免 token（文件权限即边界）；TCP 上强制 token |
+| Operator 面 | 默认 Unix socket `./coc2.sock`（`0600`）；`-operator-listen` 可额外挂 TCP | CLI / 脚本 / AI | socket 免 token（文件权限即边界）；TCP 上强制 token |
 
 被控机只需能**出站**访问 Server；运维流量默认不出本机文件系统。
 
@@ -111,7 +111,7 @@ flowchart LR
 要求 Go 1.27+。所有日常动作收口在 `make`（`make help` 看全部目标）：
 
 ```bash
-make build       # 三个二进制 → bin/server, bin/agent, bin/cleanc2
+make build       # 三个二进制 → bin/server, bin/agent, bin/coc2
 make check       # 提交前一条龙：gofmt 校验 + go vet + go test ./...
 make test-race   # go test -race ./...
 make proto       # 改 proto/ 后重新生成线协议码（需 protoc + protoc-gen-go）
@@ -132,11 +132,11 @@ Go 缓存默认落在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可
 |---|---|---|---|
 | `-config` | — | `config.yaml` | 配置文件路径 |
 | `-listen` | `listen` | `:8080` | Agent 面地址 |
-| `-operator-uds` | `operator_uds` | `./cleanc2.sock` | Operator 面 socket（空值需配合 `-operator-listen`） |
+| `-operator-uds` | `operator_uds` | `./coc2.sock` | Operator 面 socket（空值需配合 `-operator-listen`） |
 | `-operator-listen` | `operator_listen` | 空 | Operator 面 TCP 逃生门（启用即强制 token） |
 | `-token` | `token` | — | Agent hello 共享 token（生产必换，`openssl rand -hex 32`） |
 | `-api-token` | `api_token` | 同 `-token` | Operator 面 TCP 的 token |
-| `-db` | `db` | `cleanc2.db` | SQLite 路径 |
+| `-db` | `db` | `coc2.db` | SQLite 路径 |
 | `-plugins` | `plugins` | `plugins` | 插件目录 |
 | `-tls-cert` / `-tls-key` | `tls_cert` / `tls_key` | 空 | 启用 TLS 1.3 |
 | `-client-ca` | `client_ca` | 空 | 开启 mTLS |
@@ -161,15 +161,15 @@ Go 缓存默认落在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可
 ## CLI（人类与 AI 共用）
 
 ```bash
-./bin/cleanc2 health                          # 连通性自检
-./bin/cleanc2 agents list --online            # 在线清单
-./bin/cleanc2 run --cmd "df -h" --agents web1 --wait
-./bin/cleanc2 run --cmd "yum -y update" --tag env=prod --yes --wait
-./bin/cleanc2 push --agent web1 --local ./app.bin --remote /opt/app.bin --wait
-./bin/cleanc2 pull --agent web1 --remote /var/log/app.log --local ./app.log --wait
-./bin/cleanc2 tasks cancel <task_id>
-./bin/cleanc2 groups create --name ops --agents a1,a2
-./bin/cleanc2 schema                          # 机器可读命令全表
+./bin/coc2 health                          # 连通性自检
+./bin/coc2 agents list --online            # 在线清单
+./bin/coc2 run --cmd "df -h" --agents web1 --wait
+./bin/coc2 run --cmd "yum -y update" --tag env=prod --yes --wait
+./bin/coc2 push --agent web1 --local ./app.bin --remote /opt/app.bin --wait
+./bin/coc2 pull --agent web1 --remote /var/log/app.log --local ./app.log --wait
+./bin/coc2 tasks cancel <task_id>
+./bin/coc2 groups create --name ops --agents a1,a2
+./bin/coc2 schema                          # 机器可读命令全表
 ```
 
 完整命令面（`schema` 里逐条有 flag 类型与默认值）：`health` · `agents list|get|metrics|history` · `groups list|get|create|add|remove` · `run` · `tasks list|get|cancel` · `metrics overview` · `transfers list|get` · `plugins list` · `push` · `pull` · `schema` · `help`。
@@ -180,19 +180,19 @@ Go 缓存默认落在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可
 - 退出码稳定：`0` 成功 · `1` 服务端/任务/传输失败或等待超时 · `2` 连不上 · `3` 鉴权失败 · `4` 用法错误
 - 零交互：无提示、无确认等待、无进度条；危险面（多目标 fan-out）靠 `--yes` 显式声明
 - 全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可站在命令行任意位置
-- 目标解析：`-server` / `CLEANC2_SERVER` 给路径走 socket，给 `http(s)://` 走 TCP；token 走 `CLEANC2_TOKEN`
+- 目标解析：`-server` / `COC2_SERVER` 给路径走 socket，给 `http(s)://` 走 TCP；token 走 `COC2_TOKEN`
 - 三个超时别混：`--exec-timeout`（任务执行秒数）· 全局 `-timeout`（HTTP 请求时长）· `--wait-timeout`（CLI 轮询预算）
 
 ### AI 集成
 
-接入三步：跑一次 `cleanc2 schema` 学命令面 → 按退出码 + `results[]` 分支 → 参照 [docs/ai-usage.md](docs/ai-usage.md)（工作流模板、陷阱清单、聚合输出格式）。验收方式就是它自己：一个只拿到 schema 输出、没读过任何源码的 LLM Agent，独立完成了 7 步巡检→下发→建组→统计的运维闭环。
+接入三步：跑一次 `coc2 schema` 学命令面 → 按退出码 + `results[]` 分支 → 参照 [docs/ai-usage.md](docs/ai-usage.md)（工作流模板、陷阱清单、聚合输出格式）。验收方式就是它自己：一个只拿到 schema 输出、没读过任何源码的 LLM Agent，独立完成了 7 步巡检→下发→建组→统计的运维闭环。
 
 ### 裸 API
 
 CLI 之下是普通 HTTP JSON（手工调试用）。空列表返回 `[]` 不返回 `null`：
 
 ```bash
-curl --unix-socket ./cleanc2.sock http://unix/api/v1/agents
+curl --unix-socket ./coc2.sock http://unix/api/v1/agents
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/api/v1/tasks   # operator-listen 模式
 ```
 
@@ -208,7 +208,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/api/v1/tasks   # op
 
 ## 线协议
 
-`proto/cleanc2/v1/wire.proto` 是单一事实源，生成码入库。帧自描述：WebSocket text 帧 = 旧 JSON 信封，binary 帧 = protobuf `WireEnvelope`；Agent 在 hello 里声明 `proto_version`，Server 决定升档与否，混跑兼容。二进制帧下文件 chunk 走裸 bytes（JSON 路径的 base64 膨胀 -33%），且 `stdout`/`stderr`/`command` 为 bytes 字段——非 UTF-8 输出不再被静默损坏。改 `.proto` 后 `make proto` 重生成并保证对拍测试绿。
+`proto/coc2/v1/wire.proto` 是单一事实源，生成码入库。帧自描述：WebSocket text 帧 = 旧 JSON 信封，binary 帧 = protobuf `WireEnvelope`；Agent 在 hello 里声明 `proto_version`，Server 决定升档与否，混跑兼容。二进制帧下文件 chunk 走裸 bytes（JSON 路径的 base64 膨胀 -33%），且 `stdout`/`stderr`/`command` 为 bytes 字段——非 UTF-8 输出不再被静默损坏。改 `.proto` 后 `make proto` 重生成并保证对拍测试绿。
 
 ## 安全
 
@@ -246,7 +246,7 @@ internal/agent                     # 拨出连接、执行器、指标、文件 
 internal/protocol  internal/protocol/pb   # 手写编解码层 / protoc 生成码
 internal/cli                       # 操控端（registry + 命令 + HTTP client）
 internal/common                    # ID / 分块 / 校验和 / 主机信息
-proto/cleanc2/v1/wire.proto        # 线协议单一事实源
+proto/coc2/v1/wire.proto        # 线协议单一事实源
 docs/                              # ai-usage（AI 契约）· refactor-plan（v2 改造全记录）· mvp
 plugins/  scripts/  config.yaml    # 插件样例 · 生成脚本 · 默认配置
 ```

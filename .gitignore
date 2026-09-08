@@ -3,7 +3,7 @@
 .gocache_local/
 .gomodcache/
 .gomodcache_local/
-cleanc2.db
+coc2.db
 *.db
 *.db-shm
 *.db-wal

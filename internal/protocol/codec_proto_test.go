@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"cleanc2/internal/protocol/pb"
+	"coc2/internal/protocol/pb"
 )
 
 // roundTripSamples covers every wire message with edge values: sub-second

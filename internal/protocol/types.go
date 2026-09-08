@@ -1,4 +1,4 @@
-// Package protocol defines the messages exchanged between the CleanC2
+// Package protocol defines the messages exchanged between the CoC2
 // server and its agents. Two wire encodings share the same message set:
 // legacy JSON envelopes (WebSocket text frames) and protobuf envelopes
 // (binary frames), negotiated per connection via AgentHello.ProtoVersion.

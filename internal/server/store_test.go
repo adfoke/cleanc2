@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 func TestStoreTaskLifecycleAndPersistence(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "cleanc2.db")
+	dbPath := filepath.Join(t.TempDir(), "coc2.db")
 
 	store, err := NewStore(dbPath)
 	if err != nil {

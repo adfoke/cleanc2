@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"cleanc2/internal/cli"
+	"coc2/internal/cli"
 )
 
 func main() {

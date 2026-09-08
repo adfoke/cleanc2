@@ -1,4 +1,4 @@
-// Package agent implements the CleanC2 agent: a long-lived client that connects
+// Package agent implements the CoC2 agent: a long-lived client that connects
 // back to the server, executes shell tasks, reports heartbeat and metrics, and
 // handles file transfers.
 package agent
@@ -24,8 +24,8 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"cleanc2/internal/common"
-	"cleanc2/internal/protocol"
+	"coc2/internal/common"
+	"coc2/internal/protocol"
 )
 
 const (

@@ -1,4 +1,4 @@
-// Package server implements the CleanC2 server: the HTTP/WebSocket control
+// Package server implements the CoC2 server: the HTTP/WebSocket control
 // plane, task dispatch, file transfer management, plugin hooks, and SQLite
 // persistence.
 package server
@@ -25,8 +25,8 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"cleanc2/internal/common"
-	"cleanc2/internal/protocol"
+	"coc2/internal/common"
+	"coc2/internal/protocol"
 )
 
 type Service struct {

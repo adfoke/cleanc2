@@ -5,7 +5,7 @@ import (
 	"syscall"
 	"time"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 func (c *Client) collectMetrics() (protocol.MetricsReport, error) {

@@ -7,7 +7,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 func (a *agentConn) readLoop() {

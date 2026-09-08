@@ -1,4 +1,4 @@
-// Wire protocol between CleanC2 server and agents (decision A1: full
+// Wire protocol between CoC2 server and agents (decision A1: full
 // protobuf frames over WebSocket binary messages).
 //
 // Framing: every WS frame is self-describing by its opcode — TextMessage
@@ -9,9 +9,9 @@
 // Field-number discipline: never reuse or renumber fields after release.
 syntax = "proto3";
 
-package cleanc2.v1;
+package coc2.v1;
 
-option go_package = "cleanc2/internal/protocol/pb;pb";
+option go_package = "coc2/internal/protocol/pb;pb";
 
 import "google/protobuf/timestamp.proto";
 

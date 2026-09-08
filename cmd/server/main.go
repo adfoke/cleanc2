@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"cleanc2/internal/server"
+	"coc2/internal/server"
 )
 
 func main() {

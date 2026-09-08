@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 // fakeServer speaks the server side of one agent session: it verifies the

@@ -11,10 +11,10 @@ import (
 
 func TestIsUDS(t *testing.T) {
 	cases := map[string]bool{
-		"./cleanc2.sock":        true,
-		"/var/run/cleanc2.sock": true,
+		"./coc2.sock":           true,
+		"/var/run/coc2.sock":    true,
 		"~/x.sock":              true,
-		"cleanc2.sock":          true,
+		"coc2.sock":             true,
 		"http://127.0.0.1:8081": false,
 		"https://host:443":      false,
 		"127.0.0.1:8081":        false, // host:port is not a path
@@ -223,7 +223,7 @@ func TestSchemaMachineReadable(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatalf("schema not JSON: %v", err)
 	}
-	if doc.Name != "cleanc2" || len(doc.Commands) < 10 {
+	if doc.Name != "coc2" || len(doc.Commands) < 10 {
 		t.Fatalf("schema incomplete: %+v", doc)
 	}
 	for _, want := range []string{"ok", "failure", "connect", "auth", "usage"} {

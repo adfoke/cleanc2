@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"cleanc2/internal/protocol/pb"
+	"coc2/internal/protocol/pb"
 )
 
 // BinaryWireVersion is the protobuf framing version advertised by AgentHello

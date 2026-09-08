@@ -9,15 +9,15 @@ import (
 
 	"github.com/goccy/go-yaml"
 
-	"cleanc2/internal/server"
+	"coc2/internal/server"
 )
 
 func defaultServerConfig() server.Config {
 	return server.Config{
 		ListenAddr:      ":8080",
-		OperatorUDSPath: "./cleanc2.sock",
-		AuthToken:       "cleanc2-dev-token",
-		DBPath:          "cleanc2.db",
+		OperatorUDSPath: "./coc2.sock",
+		AuthToken:       "coc2-dev-token",
+		DBPath:          "coc2.db",
 		PluginDir:       "plugins",
 		WriteWait:       10 * time.Second,
 		PongWait:        70 * time.Second,

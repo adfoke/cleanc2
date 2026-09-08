@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 // dialAgentWS connects a raw websocket client to the agent plane engine and

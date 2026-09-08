@@ -1,4 +1,4 @@
-// Wire protocol between CleanC2 server and agents (decision A1: full
+// Wire protocol between CoC2 server and agents (decision A1: full
 // protobuf frames over WebSocket binary messages).
 //
 // Framing: every WS frame is self-describing by its opcode — TextMessage
@@ -12,7 +12,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v7.36.1
-// source: cleanc2/v1/wire.proto
+// source: coc2/v1/wire.proto
 
 package pb
 
@@ -44,7 +44,7 @@ type WireEnvelope struct {
 
 func (x *WireEnvelope) Reset() {
 	*x = WireEnvelope{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[0]
+	mi := &file_coc2_v1_wire_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -56,7 +56,7 @@ func (x *WireEnvelope) String() string {
 func (*WireEnvelope) ProtoMessage() {}
 
 func (x *WireEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[0]
+	mi := &file_coc2_v1_wire_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -69,7 +69,7 @@ func (x *WireEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WireEnvelope.ProtoReflect.Descriptor instead.
 func (*WireEnvelope) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{0}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *WireEnvelope) GetType() string {
@@ -107,7 +107,7 @@ type AgentHello struct {
 
 func (x *AgentHello) Reset() {
 	*x = AgentHello{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[1]
+	mi := &file_coc2_v1_wire_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -119,7 +119,7 @@ func (x *AgentHello) String() string {
 func (*AgentHello) ProtoMessage() {}
 
 func (x *AgentHello) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[1]
+	mi := &file_coc2_v1_wire_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -132,7 +132,7 @@ func (x *AgentHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentHello.ProtoReflect.Descriptor instead.
 func (*AgentHello) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{1}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *AgentHello) GetAgentId() string {
@@ -223,7 +223,7 @@ type HelloAck struct {
 
 func (x *HelloAck) Reset() {
 	*x = HelloAck{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[2]
+	mi := &file_coc2_v1_wire_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -235,7 +235,7 @@ func (x *HelloAck) String() string {
 func (*HelloAck) ProtoMessage() {}
 
 func (x *HelloAck) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[2]
+	mi := &file_coc2_v1_wire_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -248,7 +248,7 @@ func (x *HelloAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelloAck.ProtoReflect.Descriptor instead.
 func (*HelloAck) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{2}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HelloAck) GetServerTime() *timestamppb.Timestamp {
@@ -282,7 +282,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[3]
+	mi := &file_coc2_v1_wire_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -294,7 +294,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[3]
+	mi := &file_coc2_v1_wire_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -307,7 +307,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{3}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Heartbeat) GetAgentId() string {
@@ -340,7 +340,7 @@ type MetricsReport struct {
 
 func (x *MetricsReport) Reset() {
 	*x = MetricsReport{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[4]
+	mi := &file_coc2_v1_wire_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -352,7 +352,7 @@ func (x *MetricsReport) String() string {
 func (*MetricsReport) ProtoMessage() {}
 
 func (x *MetricsReport) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[4]
+	mi := &file_coc2_v1_wire_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -365,7 +365,7 @@ func (x *MetricsReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsReport.ProtoReflect.Descriptor instead.
 func (*MetricsReport) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{4}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MetricsReport) GetAgentId() string {
@@ -441,7 +441,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[5]
+	mi := &file_coc2_v1_wire_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +453,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[5]
+	mi := &file_coc2_v1_wire_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +466,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{5}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Task) GetId() string {
@@ -529,7 +529,7 @@ type TaskAck struct {
 
 func (x *TaskAck) Reset() {
 	*x = TaskAck{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[6]
+	mi := &file_coc2_v1_wire_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -541,7 +541,7 @@ func (x *TaskAck) String() string {
 func (*TaskAck) ProtoMessage() {}
 
 func (x *TaskAck) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[6]
+	mi := &file_coc2_v1_wire_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -554,7 +554,7 @@ func (x *TaskAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskAck.ProtoReflect.Descriptor instead.
 func (*TaskAck) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{6}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TaskAck) GetTaskId() string {
@@ -589,7 +589,7 @@ type TaskCancel struct {
 
 func (x *TaskCancel) Reset() {
 	*x = TaskCancel{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[7]
+	mi := &file_coc2_v1_wire_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -601,7 +601,7 @@ func (x *TaskCancel) String() string {
 func (*TaskCancel) ProtoMessage() {}
 
 func (x *TaskCancel) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[7]
+	mi := &file_coc2_v1_wire_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -614,7 +614,7 @@ func (x *TaskCancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskCancel.ProtoReflect.Descriptor instead.
 func (*TaskCancel) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{7}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TaskCancel) GetTaskId() string {
@@ -657,7 +657,7 @@ type TaskResult struct {
 
 func (x *TaskResult) Reset() {
 	*x = TaskResult{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[8]
+	mi := &file_coc2_v1_wire_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -669,7 +669,7 @@ func (x *TaskResult) String() string {
 func (*TaskResult) ProtoMessage() {}
 
 func (x *TaskResult) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[8]
+	mi := &file_coc2_v1_wire_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -682,7 +682,7 @@ func (x *TaskResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskResult.ProtoReflect.Descriptor instead.
 func (*TaskResult) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{8}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TaskResult) GetTaskId() string {
@@ -760,7 +760,7 @@ type FileTransferStart struct {
 
 func (x *FileTransferStart) Reset() {
 	*x = FileTransferStart{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[9]
+	mi := &file_coc2_v1_wire_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -772,7 +772,7 @@ func (x *FileTransferStart) String() string {
 func (*FileTransferStart) ProtoMessage() {}
 
 func (x *FileTransferStart) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[9]
+	mi := &file_coc2_v1_wire_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -785,7 +785,7 @@ func (x *FileTransferStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferStart.ProtoReflect.Descriptor instead.
 func (*FileTransferStart) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{9}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *FileTransferStart) GetTransferId() string {
@@ -871,7 +871,7 @@ type FileTransferChunk struct {
 
 func (x *FileTransferChunk) Reset() {
 	*x = FileTransferChunk{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[10]
+	mi := &file_coc2_v1_wire_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -883,7 +883,7 @@ func (x *FileTransferChunk) String() string {
 func (*FileTransferChunk) ProtoMessage() {}
 
 func (x *FileTransferChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[10]
+	mi := &file_coc2_v1_wire_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -896,7 +896,7 @@ func (x *FileTransferChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferChunk.ProtoReflect.Descriptor instead.
 func (*FileTransferChunk) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{10}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *FileTransferChunk) GetTransferId() string {
@@ -931,7 +931,7 @@ type FileTransferResume struct {
 
 func (x *FileTransferResume) Reset() {
 	*x = FileTransferResume{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[11]
+	mi := &file_coc2_v1_wire_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +943,7 @@ func (x *FileTransferResume) String() string {
 func (*FileTransferResume) ProtoMessage() {}
 
 func (x *FileTransferResume) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[11]
+	mi := &file_coc2_v1_wire_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +956,7 @@ func (x *FileTransferResume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferResume.ProtoReflect.Descriptor instead.
 func (*FileTransferResume) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{11}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *FileTransferResume) GetTransferId() string {
@@ -997,7 +997,7 @@ type FileTransferDone struct {
 
 func (x *FileTransferDone) Reset() {
 	*x = FileTransferDone{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[12]
+	mi := &file_coc2_v1_wire_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1009,7 @@ func (x *FileTransferDone) String() string {
 func (*FileTransferDone) ProtoMessage() {}
 
 func (x *FileTransferDone) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[12]
+	mi := &file_coc2_v1_wire_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1022,7 @@ func (x *FileTransferDone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileTransferDone.ProtoReflect.Descriptor instead.
 func (*FileTransferDone) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{12}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *FileTransferDone) GetTransferId() string {
@@ -1091,7 +1091,7 @@ type ErrorMessage struct {
 
 func (x *ErrorMessage) Reset() {
 	*x = ErrorMessage{}
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[13]
+	mi := &file_coc2_v1_wire_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1103,7 +1103,7 @@ func (x *ErrorMessage) String() string {
 func (*ErrorMessage) ProtoMessage() {}
 
 func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_cleanc2_v1_wire_proto_msgTypes[13]
+	mi := &file_coc2_v1_wire_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1116,7 +1116,7 @@ func (x *ErrorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorMessage.ProtoReflect.Descriptor instead.
 func (*ErrorMessage) Descriptor() ([]byte, []int) {
-	return file_cleanc2_v1_wire_proto_rawDescGZIP(), []int{13}
+	return file_coc2_v1_wire_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ErrorMessage) GetCode() string {
@@ -1133,12 +1133,11 @@ func (x *ErrorMessage) GetMessage() string {
 	return ""
 }
 
-var File_cleanc2_v1_wire_proto protoreflect.FileDescriptor
+var File_coc2_v1_wire_proto protoreflect.FileDescriptor
 
-const file_cleanc2_v1_wire_proto_rawDesc = "" +
+const file_coc2_v1_wire_proto_rawDesc = "" +
 	"\n" +
-	"\x15cleanc2/v1/wire.proto\x12\n" +
-	"cleanc2.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"<\n" +
+	"\x12coc2/v1/wire.proto\x12\acoc2.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"<\n" +
 	"\fWireEnvelope\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\"\xcc\x02\n" +
@@ -1155,12 +1154,12 @@ const file_cleanc2_v1_wire_proto_rawDesc = "" +
 	"\aversion\x18\t \x01(\tR\aversion\x12=\n" +
 	"\fconnected_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\vconnectedAt\x12#\n" +
-	"\rproto_version\x18\v \x01(\rR\fprotoVersion\"\x99\x01\n" +
+	"\rproto_version\x18\v \x01(\rR\fprotoVersion\"\x96\x01\n" +
 	"\bHelloAck\x12;\n" +
 	"\vserver_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\x12\x19\n" +
-	"\bagent_id\x18\x02 \x01(\tR\aagentId\x125\n" +
-	"\rpending_tasks\x18\x03 \x03(\v2\x10.cleanc2.v1.TaskR\fpendingTasks\"`\n" +
+	"\bagent_id\x18\x02 \x01(\tR\aagentId\x122\n" +
+	"\rpending_tasks\x18\x03 \x03(\v2\r.coc2.v1.TaskR\fpendingTasks\"`\n" +
 	"\tHeartbeat\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\xd8\x02\n" +
@@ -1244,50 +1243,50 @@ const file_cleanc2_v1_wire_proto_rawDesc = "" +
 	"\fcompleted_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\"<\n" +
 	"\fErrorMessage\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessageB!Z\x1fcleanc2/internal/protocol/pb;pbb\x06proto3"
+	"\amessage\x18\x02 \x01(\tR\amessageB\x1eZ\x1ccoc2/internal/protocol/pb;pbb\x06proto3"
 
 var (
-	file_cleanc2_v1_wire_proto_rawDescOnce sync.Once
-	file_cleanc2_v1_wire_proto_rawDescData []byte
+	file_coc2_v1_wire_proto_rawDescOnce sync.Once
+	file_coc2_v1_wire_proto_rawDescData []byte
 )
 
-func file_cleanc2_v1_wire_proto_rawDescGZIP() []byte {
-	file_cleanc2_v1_wire_proto_rawDescOnce.Do(func() {
-		file_cleanc2_v1_wire_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cleanc2_v1_wire_proto_rawDesc), len(file_cleanc2_v1_wire_proto_rawDesc)))
+func file_coc2_v1_wire_proto_rawDescGZIP() []byte {
+	file_coc2_v1_wire_proto_rawDescOnce.Do(func() {
+		file_coc2_v1_wire_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_coc2_v1_wire_proto_rawDesc), len(file_coc2_v1_wire_proto_rawDesc)))
 	})
-	return file_cleanc2_v1_wire_proto_rawDescData
+	return file_coc2_v1_wire_proto_rawDescData
 }
 
-var file_cleanc2_v1_wire_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
-var file_cleanc2_v1_wire_proto_goTypes = []any{
-	(*WireEnvelope)(nil),          // 0: cleanc2.v1.WireEnvelope
-	(*AgentHello)(nil),            // 1: cleanc2.v1.AgentHello
-	(*HelloAck)(nil),              // 2: cleanc2.v1.HelloAck
-	(*Heartbeat)(nil),             // 3: cleanc2.v1.Heartbeat
-	(*MetricsReport)(nil),         // 4: cleanc2.v1.MetricsReport
-	(*Task)(nil),                  // 5: cleanc2.v1.Task
-	(*TaskAck)(nil),               // 6: cleanc2.v1.TaskAck
-	(*TaskCancel)(nil),            // 7: cleanc2.v1.TaskCancel
-	(*TaskResult)(nil),            // 8: cleanc2.v1.TaskResult
-	(*FileTransferStart)(nil),     // 9: cleanc2.v1.FileTransferStart
-	(*FileTransferChunk)(nil),     // 10: cleanc2.v1.FileTransferChunk
-	(*FileTransferResume)(nil),    // 11: cleanc2.v1.FileTransferResume
-	(*FileTransferDone)(nil),      // 12: cleanc2.v1.FileTransferDone
-	(*ErrorMessage)(nil),          // 13: cleanc2.v1.ErrorMessage
+var file_coc2_v1_wire_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_coc2_v1_wire_proto_goTypes = []any{
+	(*WireEnvelope)(nil),          // 0: coc2.v1.WireEnvelope
+	(*AgentHello)(nil),            // 1: coc2.v1.AgentHello
+	(*HelloAck)(nil),              // 2: coc2.v1.HelloAck
+	(*Heartbeat)(nil),             // 3: coc2.v1.Heartbeat
+	(*MetricsReport)(nil),         // 4: coc2.v1.MetricsReport
+	(*Task)(nil),                  // 5: coc2.v1.Task
+	(*TaskAck)(nil),               // 6: coc2.v1.TaskAck
+	(*TaskCancel)(nil),            // 7: coc2.v1.TaskCancel
+	(*TaskResult)(nil),            // 8: coc2.v1.TaskResult
+	(*FileTransferStart)(nil),     // 9: coc2.v1.FileTransferStart
+	(*FileTransferChunk)(nil),     // 10: coc2.v1.FileTransferChunk
+	(*FileTransferResume)(nil),    // 11: coc2.v1.FileTransferResume
+	(*FileTransferDone)(nil),      // 12: coc2.v1.FileTransferDone
+	(*ErrorMessage)(nil),          // 13: coc2.v1.ErrorMessage
 	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
 }
-var file_cleanc2_v1_wire_proto_depIdxs = []int32{
-	14, // 0: cleanc2.v1.AgentHello.connected_at:type_name -> google.protobuf.Timestamp
-	14, // 1: cleanc2.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
-	5,  // 2: cleanc2.v1.HelloAck.pending_tasks:type_name -> cleanc2.v1.Task
-	14, // 3: cleanc2.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	14, // 4: cleanc2.v1.MetricsReport.timestamp:type_name -> google.protobuf.Timestamp
-	14, // 5: cleanc2.v1.Task.created_at:type_name -> google.protobuf.Timestamp
-	14, // 6: cleanc2.v1.TaskAck.received_at:type_name -> google.protobuf.Timestamp
-	14, // 7: cleanc2.v1.TaskCancel.requested_at:type_name -> google.protobuf.Timestamp
-	14, // 8: cleanc2.v1.TaskResult.completed_at:type_name -> google.protobuf.Timestamp
-	14, // 9: cleanc2.v1.FileTransferStart.requested_at:type_name -> google.protobuf.Timestamp
-	14, // 10: cleanc2.v1.FileTransferDone.completed_at:type_name -> google.protobuf.Timestamp
+var file_coc2_v1_wire_proto_depIdxs = []int32{
+	14, // 0: coc2.v1.AgentHello.connected_at:type_name -> google.protobuf.Timestamp
+	14, // 1: coc2.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
+	5,  // 2: coc2.v1.HelloAck.pending_tasks:type_name -> coc2.v1.Task
+	14, // 3: coc2.v1.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	14, // 4: coc2.v1.MetricsReport.timestamp:type_name -> google.protobuf.Timestamp
+	14, // 5: coc2.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	14, // 6: coc2.v1.TaskAck.received_at:type_name -> google.protobuf.Timestamp
+	14, // 7: coc2.v1.TaskCancel.requested_at:type_name -> google.protobuf.Timestamp
+	14, // 8: coc2.v1.TaskResult.completed_at:type_name -> google.protobuf.Timestamp
+	14, // 9: coc2.v1.FileTransferStart.requested_at:type_name -> google.protobuf.Timestamp
+	14, // 10: coc2.v1.FileTransferDone.completed_at:type_name -> google.protobuf.Timestamp
 	11, // [11:11] is the sub-list for method output_type
 	11, // [11:11] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
@@ -1295,26 +1294,26 @@ var file_cleanc2_v1_wire_proto_depIdxs = []int32{
 	0,  // [0:11] is the sub-list for field type_name
 }
 
-func init() { file_cleanc2_v1_wire_proto_init() }
-func file_cleanc2_v1_wire_proto_init() {
-	if File_cleanc2_v1_wire_proto != nil {
+func init() { file_coc2_v1_wire_proto_init() }
+func file_coc2_v1_wire_proto_init() {
+	if File_coc2_v1_wire_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cleanc2_v1_wire_proto_rawDesc), len(file_cleanc2_v1_wire_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_coc2_v1_wire_proto_rawDesc), len(file_coc2_v1_wire_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_cleanc2_v1_wire_proto_goTypes,
-		DependencyIndexes: file_cleanc2_v1_wire_proto_depIdxs,
-		MessageInfos:      file_cleanc2_v1_wire_proto_msgTypes,
+		GoTypes:           file_coc2_v1_wire_proto_goTypes,
+		DependencyIndexes: file_coc2_v1_wire_proto_depIdxs,
+		MessageInfos:      file_coc2_v1_wire_proto_msgTypes,
 	}.Build()
-	File_cleanc2_v1_wire_proto = out.File
-	file_cleanc2_v1_wire_proto_goTypes = nil
-	file_cleanc2_v1_wire_proto_depIdxs = nil
+	File_coc2_v1_wire_proto = out.File
+	file_coc2_v1_wire_proto_goTypes = nil
+	file_coc2_v1_wire_proto_depIdxs = nil
 }

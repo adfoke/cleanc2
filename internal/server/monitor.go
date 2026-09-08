@@ -3,7 +3,7 @@ package server
 import (
 	"go.uber.org/zap"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 )
 
 func (s *Service) handleMetricsReport(report protocol.MetricsReport) {

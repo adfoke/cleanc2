@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"cleanc2/internal/protocol"
+	"coc2/internal/protocol"
 	"go.uber.org/zap"
 )
 
