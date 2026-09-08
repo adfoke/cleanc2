@@ -72,13 +72,13 @@ func addWriteCommands(r *Registry) {
 		Summary: "Dispatch a shell command to agents (--wait blocks for results)",
 		Flags: []FlagSpec{
 			{Name: "cmd", Type: "string", Desc: "shell command to run (required)"},
-			{Name: "agents", Type: "stringlist", Desc: "target agent ids (comma separated)"},
+			{Name: "agents", Type: "stringlist", Desc: "target agent ids (comma separated, flag repeatable)"},
 			{Name: "group", Type: "stringlist", Desc: "target group ids"},
 			{Name: "tag", Type: "stringlist", Desc: "target tags (k or k=v)"},
-			{Name: "timeout", Type: "int", Default: "60", Desc: "execution timeout seconds per agent"},
+			{Name: "exec-timeout", Type: "int", Default: "60", Desc: "execution timeout in SECONDS per agent (distinct from global -timeout, which is the HTTP request duration)"},
 			{Name: "wait", Type: "bool", Desc: "block until every task reaches a terminal state"},
-			{Name: "wait-timeout", Type: "duration", Default: "90s", Desc: "poll budget for --wait"},
-			{Name: "yes", Type: "bool", Desc: "confirm multi-agent fan-out"},
+			{Name: "wait-timeout", Type: "duration", Default: "90s", Desc: "CLI polling budget for --wait; must cover exec-timeout"},
+			{Name: "yes", Type: "bool", Desc: "REQUIRED whenever the selector can fan out: any --group/--tag value, or more than one --agents token"},
 		},
 		Run: func(g *Globals, cf *CmdFlags) error {
 			cmd := cf.String("cmd")
@@ -167,8 +167,8 @@ func addWriteCommands(r *Registry) {
 		Name:    "groups create",
 		Summary: "Create or update a group (full replacement of members)",
 		Flags: []FlagSpec{
-			{Name: "name", Type: "string", Desc: "group name (required)"},
-			{Name: "id", Type: "string", Desc: "explicit id; empty = server generates"},
+			{Name: "name", Type: "string", Desc: "group name (required, unique; collision -> exit 1)"},
+			{Name: "id", Type: "string", Desc: "explicit id; with existing id this UPDATES the group (full member replace); empty = create new"},
 			{Name: "desc", Type: "string", Desc: "description"},
 			{Name: "agents", Type: "stringlist", Desc: "member agent ids"},
 		},

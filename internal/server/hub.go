@@ -420,6 +420,7 @@ func (s *Service) operatorRoutes() *gin.Engine {
 			Name:        req.Name,
 			Description: req.Description,
 			AgentIDs:    req.AgentIDs,
+			MemberCount: len(req.AgentIDs),
 			CreatedAt:   time.Now().UTC(),
 		}
 		if group.ID == "" {

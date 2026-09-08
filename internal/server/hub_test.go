@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,5 +392,41 @@ func TestOperatorTCPPlaneEnforcesToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("tokenless request on TCP operator plane = %d, want 401", rec.Code)
+	}
+}
+
+func TestEmptyListsSerializeAsArrayNotNull(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	for _, path := range []string{"/api/v1/agents", "/api/v1/tasks", "/api/v1/groups", "/api/v1/transfers"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		setTestAuth(req)
+		rec := httptest.NewRecorder()
+		svc.engine.ServeHTTP(rec, req)
+
+		if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+			t.Fatalf("%s = %q, want []", path, body)
+		}
+	}
+}
+
+func TestGroupCreateResponseCarriesMemberCount(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	raw, _ := json.Marshal(map[string]any{"name": "g-audit", "agent_ids": []string{"a1", "a2"}})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/groups", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	setTestAuth(req)
+	rec := httptest.NewRecorder()
+	svc.engine.ServeHTTP(rec, req)
+
+	var group Group
+	if err := json.Unmarshal(rec.Body.Bytes(), &group); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if group.MemberCount != 2 || len(group.AgentIDs) != 2 {
+		t.Fatalf("create ack must report real membership, got %+v", group)
 	}
 }

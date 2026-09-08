@@ -61,7 +61,7 @@ func NewPluginManager(dir string, logger *zap.Logger) (*PluginManager, error) {
 }
 
 func (pm *PluginManager) List() []Plugin {
-	return append([]Plugin(nil), pm.plugins...)
+	return append(make([]Plugin, 0, len(pm.plugins)), pm.plugins...)
 }
 
 func (pm *PluginManager) Trigger(hook string, payload any) {

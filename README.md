@@ -140,6 +140,8 @@ Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。一切操控�
 
 `run --wait` 的聚合输出形如 `{"all_ok":false,"results":[{"task_id","agent_id","state","exit_code","stdout","stderr","duration_ms"}]}`；任一任务非 success 时进程退出码为 1。
 
+给 AI/自动化代理的完整契约（退出码语义、陷阱清单、工作流模板）：`docs/ai-usage.md`。程序化接入第一步永远是 `cleanc2 schema`。
+
 AI 友好约定：stdout 只输出紧凑 JSON（`--pretty` 缩进），错误 JSON 走 stderr；退出码稳定 —— `0` 成功 / `1` 服务端或任务失败 / `2` 连不上 / `3` 鉴权失败 / `4` 用法错误；任何命令不交互、不 spinner；全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可出现在 argv 任意位置。
 
 Server 的 Operator 面拓扑：

@@ -381,7 +381,7 @@ func (s *Store) Agents() ([]AgentState, error) {
 	}
 	defer rows.Close()
 
-	var items []AgentState
+	items := make([]AgentState, 0, 8)
 	for rows.Next() {
 		var (
 			item        AgentState
@@ -623,7 +623,7 @@ func (s *Store) RecentTasks(limit int) ([]taskStatus, error) {
 	}
 	defer rows.Close()
 
-	var items []taskStatus
+	items := make([]taskStatus, 0, 8)
 	for rows.Next() {
 		item, err := scanTaskStatus(rows)
 		if err != nil {
@@ -700,7 +700,7 @@ func (s *Store) AgentMetricsHistory(agentID string, limit int) ([]protocol.Metri
 	}
 	defer rows.Close()
 
-	var items []protocol.MetricsReport
+	items := make([]protocol.MetricsReport, 0, 8)
 	for rows.Next() {
 		var m protocol.MetricsReport
 		var ts string
@@ -775,7 +775,7 @@ func (s *Store) RecentTransferAudits(limit int) ([]TransferAudit, error) {
 	}
 	defer rows.Close()
 
-	var items []TransferAudit
+	items := make([]TransferAudit, 0, 8)
 	for rows.Next() {
 		var (
 			audit      TransferAudit
@@ -834,7 +834,7 @@ func (s *Store) Groups() ([]Group, error) {
 	}
 	defer rows.Close()
 
-	var items []Group
+	items := make([]Group, 0, 8)
 	for rows.Next() {
 		var item Group
 		var createdRaw string
