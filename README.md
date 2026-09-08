@@ -83,27 +83,31 @@ flowchart LR
 
 ## 构建和运行
 
-要求 Go 1.27+（`go.mod` 声明）。
+要求 Go 1.27+（`go.mod` 声明）。日常入口是仓库根的 `Makefile`（`make help` 列出全部目标）。默认把 Go 缓存放在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可被环境覆盖：`GOCACHE=/tmp/x make build`。
 
-先构建：
-
-```bash
-mkdir -p ./bin
-go build -o ./bin/server ./cmd/server
-go build -o ./bin/agent ./cmd/agent
-go build -o ./bin/cleanc2 ./cmd/cli
-```
-
-测试：
+构建（三个二进制到 `./bin`）：
 
 ```bash
-go test ./...
+make build
 ```
+
+测试与自检（原「测试」小节并入）：
+
+```bash
+make test        # go test ./...
+make test-race   # go test -race ./...
+make lint        # gofmt 校验 + go vet
+make fmt         # gofmt -w 原地格式化（不改 internal/protocol/pb 生成码）
+make check       # 提交前一条龙：lint + test
+make clean       # 清掉 ./bin、仓库根 cleanc2.sock 与 *.db*（不动缓存）
+```
+
+不用 `make` 时的等价命令：`mkdir -p ./bin && go build -o ./bin/server ./cmd/server && go build -o ./bin/agent ./cmd/agent && go build -o ./bin/cleanc2 ./cmd/cli`，测试为 `go test ./...`。
 
 改动 `proto/cleanc2/v1/wire.proto` 后重新生成线协议码（需要 `protoc` 与 `protoc-gen-go`）：
 
 ```bash
-./scripts/gen-proto.sh
+make proto       # 等价于 ./scripts/gen-proto.sh
 ```
 
 Server:
