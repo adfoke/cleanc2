@@ -395,6 +395,36 @@ func TestOperatorTCPPlaneEnforcesToken(t *testing.T) {
 	}
 }
 
+func TestOperatorAuthAcceptsBearerAndBasicOnly(t *testing.T) {
+	svc, cleanup := newTestService(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	setTestAuth(req) // Basic admin:test-token
+	svc.engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Basic auth = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	svc.engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Bearer auth = %d, want 200", rec.Code)
+	}
+
+	// The retired X-Auth-Token custom header must no longer authenticate.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	req.Header.Set("X-Auth-Token", "test-token")
+	svc.engine.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("X-Auth-Token = %d, want 401 (header support removed)", rec.Code)
+	}
+}
+
 func TestEmptyListsSerializeAsArrayNotNull(t *testing.T) {
 	svc, cleanup := newTestService(t)
 	defer cleanup()

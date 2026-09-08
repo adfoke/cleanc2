@@ -115,7 +115,7 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 
 - **Agent 面**：`-listen`（默认 `:8080`）只挂 `/ws/agent` + `/healthz`，鉴权走 hello token（不变）。
 - **Operator 面**：CLI/API 专用。默认只监听 Unix socket（`-operator-uds`，默认 `./cleanc2.sock`，文件权限 `0600`，**免 token**——文件系统权限即边界，且消灭「token 躺在 config.yaml」的常态泄漏）。
-- **逃生门**：`-operator-listen <addr>` 显式指定才把 operator 面再挂一份 TCP，此时 token 鉴权强制（Bearer/Basic/X-Auth-Token 三式保留）。UDS 与 TCP 共用一个 gin engine，鉴权按配置整体启停。
+- **逃生门**：`-operator-listen <addr>` 显式指定才把 operator 面再挂一份 TCP，此时 token 鉴权强制（Bearer/Basic 两式；Web 清理轮又砍掉了零调用方的 X-Auth-Token 头与 WWW-Authenticate 响应头）。UDS 与 TCP 共用一个 gin engine，鉴权按配置整体启停。
 - `/` 与 `/dashboard` 随 Dashboard 一起删除；WS `CheckOrigin` 收紧为**拒绝任何携带 Origin 的握手**（浏览器 fetch 可带 `Origin: null` 打无 Origin 检查的端点，全拒才是正确姿势）。
 - CLI 地址解析：值以 `/`、`~`、`.` 开头或无 scheme 无端口 → 按 UDS 路径；`http(s)://` 前缀 → TCP。
 

@@ -123,6 +123,13 @@ func checkOrigin(r *http.Request) bool {
 }
 
 func New(cfg Config, logger *zap.Logger) (*Service, error) {
+	// Silence gin's debug banner and per-route startup dump (22 lines to
+	// stdout). The operator plane contract is JSON-only. Honors GIN_MODE
+	// when the operator explicitly set it.
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	if cfg.ListenAddr == "" {
 		return nil, errors.New("listen addr is required")
 	}
@@ -752,7 +759,8 @@ func (s *Service) requireOperatorAuth() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.Header("WWW-Authenticate", `Basic realm="cleanc2"`)
+		// No WWW-Authenticate: it exists to trigger browser login prompts,
+		// and there is no browser on this plane anymore.
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 	}
 }
@@ -762,6 +770,9 @@ func (s *Service) authorizedOperator(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
+	// Two accepted forms: Bearer (what the CLI sends) and Basic (curl -u
+	// ergonomics). The old X-Auth-Token custom header had no caller left
+	// after the dashboard was removed.
 	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
 		if user, pass, ok := r.BasicAuth(); ok && user != "" {
 			return subtle.ConstantTimeCompare([]byte(pass), []byte(token)) == 1
@@ -769,9 +780,6 @@ func (s *Service) authorizedOperator(r *http.Request) bool {
 		if bearer, ok := strings.CutPrefix(auth, "Bearer "); ok {
 			return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(bearer)), []byte(token)) == 1
 		}
-	}
-	if headerToken := strings.TrimSpace(r.Header.Get("X-Auth-Token")); headerToken != "" {
-		return subtle.ConstantTimeCompare([]byte(headerToken), []byte(token)) == 1
 	}
 	return false
 }
