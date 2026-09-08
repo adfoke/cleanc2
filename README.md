@@ -129,7 +129,16 @@ Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。一切操控�
 ./bin/cleanc2 agents list --online       # 在线 agent
 ./bin/cleanc2 schema                     # 机器可读命令全表（AI 从这里学 CLI）
 ./bin/cleanc2 metrics overview
+./bin/cleanc2 run --cmd "uptime" --agents web1 --wait          # 单机执行并等结果
+./bin/cleanc2 run --cmd "df -h" --tag prod --yes --wait       # 批量（>1 目标必须 --yes）
+./bin/cleanc2 push --agent web1 --local ./app.bin --remote /opt/app.bin --wait
+./bin/cleanc2 pull --agent web1 --remote /var/log/app.log --local ./app.log --wait
+./bin/cleanc2 tasks cancel <task_id>
+./bin/cleanc2 groups create --name ops --agents a1,a2
+./bin/cleanc2 groups add g1 a3 ; ./bin/cleanc2 groups remove g1 a1
 ```
+
+`run --wait` 的聚合输出形如 `{"all_ok":false,"results":[{"task_id","agent_id","state","exit_code","stdout","stderr","duration_ms"}]}`；任一任务非 success 时进程退出码为 1。
 
 AI 友好约定：stdout 只输出紧凑 JSON（`--pretty` 缩进），错误 JSON 走 stderr；退出码稳定 —— `0` 成功 / `1` 服务端或任务失败 / `2` 连不上 / `3` 鉴权失败 / `4` 用法错误；任何命令不交互、不 spinner；全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可出现在 argv 任意位置。
 

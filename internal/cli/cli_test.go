@@ -11,7 +11,7 @@ import (
 
 func TestIsUDS(t *testing.T) {
 	cases := map[string]bool{
-		"./cleanc2.sock":       true,
+		"./cleanc2.sock":        true,
 		"/var/run/cleanc2.sock": true,
 		"~/x.sock":              true,
 		"cleanc2.sock":          true,

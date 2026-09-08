@@ -58,10 +58,10 @@ func (f *CmdFlags) Args() []string { return f.args }
 
 // Command is one leaf subcommand.
 type Command struct {
-	Name    string     `json:"name"` // e.g. "agents list"
-	Summary string     `json:"summary"`
-	Flags   []FlagSpec `json:"flags,omitempty"`
-	Params  []string   `json:"params,omitempty"` // positional args
+	Name    string                               `json:"name"` // e.g. "agents list"
+	Summary string                               `json:"summary"`
+	Flags   []FlagSpec                           `json:"flags,omitempty"`
+	Params  []string                             `json:"params,omitempty"` // positional args
 	Run     func(g *Globals, cf *CmdFlags) error `json:"-"`
 }
 

@@ -127,7 +127,7 @@ internal/protocol/pb/           # protoc 生成码（生成脚本 scripts/gen-pr
 | S1 | 删 dashboard + 路由清理 + WS Origin 收紧 + README/API 文档同步 | `go test ./...` 绿；`/dashboard` 返回 404 的回归测试 |
 | S2 | ✅ 已完成 | proto/ + pb 生成码入库；双栈按 opcode 自描述，hello 协商；对拍/协商 e2e 齐；突变五连（丢字段、截数据、三处翻转逻辑）全命中 |
 | S3 | ✅ 已完成 | `cmd/cli`→`bin/cleanc2`：health + agents(list/get/metrics/history) + groups(list/get) + tasks(list/get) + metrics overview + transfers + plugins + schema；全局 flag 任意位置（hoist）；退出码 0/1/2/3/4；测试 10 项 + 突变（auth 映射、k=v filter 正例——首版假绿已补） |
-| S4 | run --wait / push / pull 写路径 + 危险操作 --yes | 起一个进程内嵌 server 的端到端测试（现有 hub_test 模式可复用） |
+| S4 | ✅ 已完成 | run(--wait/--yes 闸门/exec-timeout)、tasks cancel、groups create/add/remove（读-改-写）、push/pull(--wait 轮询 transfer 终态)；fake 轮询依赖化后突变三连（--yes 闸门、失败映射、transfer 终态判定）全命中；真机 e2e：run --wait 成败/cancel 打进程树/push+pull 字节回环 |
 | S5 | `docs/ai-usage.md` + 收尾 | 拿真实 LLM agent 用 `schema` 输出现场跑一轮 `run --wait` 冒烟 |
 
 依赖关系：S0、S1 可并行；S2 独立于 S3；S3 依赖现有 API 形状冻结（S1 完成后）。

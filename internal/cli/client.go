@@ -20,11 +20,11 @@ import (
 
 // Exit codes (stable contract, documented in the schema command).
 const (
-	ExitOK       = 0
-	ExitFailure  = 1 // server-side failure, task failure, or transport error
-	ExitConnect  = 2 // cannot reach the operator plane
-	ExitAuth     = 3 // rejected by token auth
-	ExitUsage    = 4 // bad flags / arguments
+	ExitOK      = 0
+	ExitFailure = 1 // server-side failure, task failure, or transport error
+	ExitConnect = 2 // cannot reach the operator plane
+	ExitAuth    = 3 // rejected by token auth
+	ExitUsage   = 4 // bad flags / arguments
 )
 
 // Error carries the exit code a failure maps to.
@@ -46,9 +46,9 @@ func fail(code, msg string, exit int) error {
 // URL (http://host:port — the TCP escape hatch) or a filesystem path to the
 // Unix socket (the default plane).
 type Client struct {
-	target  string
-	token   string
-	timeout time.Duration
+	target   string
+	token    string
+	timeout  time.Duration
 	insecure bool
 }
 

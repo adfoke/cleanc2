@@ -15,6 +15,7 @@ func RegisterAll(r *Registry) {
 	addMetrics(r)
 	addTransfers(r)
 	addPlugins(r)
+	addWriteCommands(r)
 }
 
 func mustArgs(cf *CmdFlags, n int, usage string) error {
