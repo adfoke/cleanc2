@@ -1,32 +1,53 @@
 # CleanC2
 
-轻量服务器批量管理系统。面向合法运维场景。
+面向合法运维场景的轻量服务器批量管理系统：一个 Server、N 台 Agent、一个为 AI 而生的 CLI。
 
-## 能力
+- **AI-native 操控面** —— 没有 Dashboard。一切操作走 `cleanc2` CLI：stdout 纯 JSON、稳定退出码、`cleanc2 schema` 自描述，LLM Agent 拿起来就能用（[契约全文](docs/ai-usage.md)）。
+- **零信任边界清晰** —— Agent 拨出长连接（被控机不需要开任何入站端口）；Operator 面默认 Unix socket，文件权限即访问边界。
+- **小** —— 纯 Go，三个静态二进制，SQLite 单文件持久化，无外部依赖服务。
 
-- Agent 主动连接 Server
-- 线协议：Protobuf 二进制帧（A1），JSON 旧帧按 hello 协商共存
-- 心跳与在线状态管理
-- 单机 / 批量命令下发
-- 按 `agent_ids`、`group_ids`、`tags` 选目标
-- 分组模型：`groups` + `group_members`
-- 任务取消
-- 任务超时回收（服务端兜底标记 `timeout` / `canceled`）
-- 命令执行进程组隔离（取消/超时终止整棵进程树）
-- SQLite 持久化
-- 离线任务重连补发
-- 文件上传 / 下载
-- 文件传输断点续传（失败后保留 `.part` 临时文件，重试自动续传）
-- 传输超时回收（进行中的传输 10 分钟无进展自动标记失败，保留 `.part`）
-- 文件传输分块完整性校验（按 `Seq` 重排、缺包/重复检测）
-- 文件传输 SHA256 校验（二进制帧下 chunk 不再 base64，省 33% 膨胀）
-- 文件传输审计
-- Agent 基础监控上报 + 指标历史（每 Agent 保留最近 1000 条）
-- 本地插件钩子
-- 双监听面：Agent 面（TCP `/ws/agent`）+ Operator 面（默认 Unix socket，CLI/API 专用，免 token）
-- TLS 1.3 / mTLS 参数入口
-- WebSocket 握手拒绝一切带 Origin 的请求（无浏览器端）
-- 恒定时间 Token 比较（Operator 面 TCP 逃生门）
+> 本项目是运维工具：能力（任意命令下发、文件分发、静默长连接）与 C2 框架同构，用于合法的基础设施管理。使用前确保你对目标机器有管理授权，遵守所在地法律。
+
+## 30 秒上手
+
+```bash
+make build                                    # 产出 bin/{server,agent,cleanc2}
+
+./bin/server -config ./config.yaml            # Agent 面 :8080；Operator 面 ./cleanc2.sock
+./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token &
+
+./bin/cleanc2 run --cmd "uptime" --agents <agent_id> --wait
+```
+
+输出即结果：
+
+```json
+{"all_ok":true,"results":[{"task_id":"…","agent_id":"…","state":"success","exit_code":0,"stdout":" 9:03  up 14 days …","stderr":"","duration_ms":12}]}
+```
+
+## 能力总览
+
+**命令执行**
+- 单机 / 批量下发，目标可用 `agent_ids` / `group_ids` / `tags` 三种选择器混选
+- 至多一次的派发语义 + 服务端超时回收，任务不会静默卡死（[语义细节](#任务执行语义)）
+- 取消 / 超时终止整棵进程树，不留孤儿进程
+- Agent 离线时任务排队，重连自动补发
+
+**文件传输**
+- 上传 / 下载，分块 + SHA256 校验 + `Seq` 乱序重排与缺包检测
+- 断点续传：失败保留 `.part`，重试自动续传；10 分钟无进展自动回收
+- 全程审计（谁、何时、传到哪、完整性是否验证）
+
+**连接与协议**
+- Agent 主动拨出 WebSocket，指数退避重连；心跳维护在线状态
+- 线协议 Protobuf 二进制帧（[wire.proto](proto/cleanc2/v1/wire.proto) 是单一事实源），与旧 JSON 帧按 hello 协商共存，老 Agent 不掉线
+- TLS 1.3 / mTLS 可选，跨站 WebSocket 握手全拒
+
+**平台**
+- SQLite 持久化（Agent、任务、分组、指标、传输审计）
+- 基础监控上报 + 指标历史（每 Agent 最近 1000 条）
+- 本地可执行文件插件钩子（[plugins/README.md](plugins/README.md)）
+- CLI：紧凑 JSON / 退出码契约 / 无交互 / `--wait` 阻塞收结果 / `schema` 自描述
 
 ## 架构
 
@@ -76,176 +97,160 @@ flowchart LR
     store --> api
 ```
 
-- 运维人员/AI 通过 CLI 操作 Server；CLI 默认走 Unix socket（`cleanc2.sock`，0600），文件权限即访问边界。
-- Server 分两个监听面：Agent 面只挂 `/ws/agent` + `/healthz`（token 在协议内校验）；Operator 面挂全部 `/api/v1/*`。
-- Agent 主动连回 Server，执行命令，回传结果，并周期上报心跳和基础监控。
-- SQLite 持久化 Agent、任务、分组、指标和传输审计，支持离线任务补发。
+两个监听面，各守各的边界：
 
-## 构建和运行
+| 平面 | 端点 | 谁在用 | 鉴权 |
+|---|---|---|---|
+| Agent 面 | `-listen`（默认 `:8080`）的 `/ws/agent` + `/healthz` | 被控机上的 Agent | 协议内 hello token（恒定时间比较） |
+| Operator 面 | 默认 Unix socket `./cleanc2.sock`（`0600`）；`-operator-listen` 可额外挂 TCP | CLI / 脚本 / AI | socket 免 token（文件权限即边界）；TCP 上强制 token |
 
-要求 Go 1.27+（`go.mod` 声明）。日常入口是仓库根的 `Makefile`（`make help` 列出全部目标）。默认把 Go 缓存放在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可被环境覆盖：`GOCACHE=/tmp/x make build`。
+被控机只需能**出站**访问 Server；运维流量默认不出本机文件系统。
 
-构建（三个二进制到 `./bin`）：
+## 构建
 
-```bash
-make build
-```
-
-测试与自检（原「测试」小节并入）：
+要求 Go 1.27+。所有日常动作收口在 `make`（`make help` 看全部目标）：
 
 ```bash
-make test        # go test ./...
+make build       # 三个二进制 → bin/server, bin/agent, bin/cleanc2
+make check       # 提交前一条龙：gofmt 校验 + go vet + go test ./...
 make test-race   # go test -race ./...
-make lint        # gofmt 校验 + go vet
-make fmt         # gofmt -w 原地格式化（不改 internal/protocol/pb 生成码）
-make check       # 提交前一条龙：lint + test
-make clean       # 清掉 ./bin、仓库根 cleanc2.sock 与 *.db*（不动缓存）
+make proto       # 改 proto/ 后重新生成线协议码（需 protoc + protoc-gen-go）
+make clean       # 清 ./bin 与仓库根 socket/db，不动缓存与源码
 ```
 
-不用 `make` 时的等价命令：`mkdir -p ./bin && go build -o ./bin/server ./cmd/server && go build -o ./bin/agent ./cmd/agent && go build -o ./bin/cleanc2 ./cmd/cli`，测试为 `go test ./...`。
+Go 缓存默认落在仓库本地 `.gocache_local/`、`.gomodcache_local/`，可环境覆盖（`GOCACHE=/tmp/x make build`）。生成码 `internal/protocol/pb/` 提交进仓库，构建不需要 protoc。不想用 make 的等价命令：`go build -o ./bin/server ./cmd/server`（agent/cli 同理）、`go test ./...`。
 
-改动 `proto/cleanc2/v1/wire.proto` 后重新生成线协议码（需要 `protoc` 与 `protoc-gen-go`）：
+## 运行
+
+### Server
 
 ```bash
-make proto       # 等价于 ./scripts/gen-proto.sh
+./bin/server -config ./config.yaml          # 命令行参数覆盖 yaml 同名字段
 ```
 
-Server:
+| 参数 | yaml 键 | 默认 | 说明 |
+|---|---|---|---|
+| `-config` | — | `config.yaml` | 配置文件路径 |
+| `-listen` | `listen` | `:8080` | Agent 面地址 |
+| `-operator-uds` | `operator_uds` | `./cleanc2.sock` | Operator 面 socket（空值需配合 `-operator-listen`） |
+| `-operator-listen` | `operator_listen` | 空 | Operator 面 TCP 逃生门（启用即强制 token） |
+| `-token` | `token` | — | Agent hello 共享 token（生产必换，`openssl rand -hex 32`） |
+| `-api-token` | `api_token` | 同 `-token` | Operator 面 TCP 的 token |
+| `-db` | `db` | `cleanc2.db` | SQLite 路径 |
+| `-plugins` | `plugins` | `plugins` | 插件目录 |
+| `-tls-cert` / `-tls-key` | `tls_cert` / `tls_key` | 空 | 启用 TLS 1.3 |
+| `-client-ca` | `client_ca` | 空 | 开启 mTLS |
+| `-require-tls` | `require_tls` | `false` | 无 TLS 配置时拒绝启动 |
+| `-write-wait` / `-pong-wait` / `-ping-period` | 同名 | `10s/70s/25s` | WebSocket 保活参数 |
+
+### Agent
 
 ```bash
-./bin/server -config ./config.yaml
+./bin/agent -server ws://127.0.0.1:8080/ws/agent -token <token> -tags web,prod
 ```
 
-命令行参数会覆盖 `config.yaml`。
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-server` | `ws://127.0.0.1:8080/ws/agent` | Server 地址（生产用 `wss://`） |
+| `-token` | — | 与 Server `token` 一致 |
+| `-agent-id` | 主机名（取不到则随机） | 建议显式指定，稳定身份 |
+| `-tags` | 空 | 逗号分隔，供 `--tag` 选择器命中 |
+| `-heartbeat` / `-max-backoff` | `30s/30s` | 心跳间隔 / 重连退避上限 |
+| `-server-name` / `-ca-cert` / `-client-cert` / `-client-key` | 空 | TLS / mTLS 客户端参数 |
 
-Agent:
+## CLI（人类与 AI 共用）
 
 ```bash
-./bin/agent -server ws://127.0.0.1:8080/ws/agent -token cleanc2-dev-token
-```
-
-## 操作面（CLI）
-
-Dashboard 已移除（改造 S1，见 `docs/refactor-plan.md`）。一切操控走 `cleanc2` CLI：
-
-```bash
-./bin/cleanc2 health                     # 连通性自检
-./bin/cleanc2 agents list --online       # 在线 agent
-./bin/cleanc2 schema                     # 机器可读命令全表（AI 从这里学 CLI）
-./bin/cleanc2 metrics overview
-./bin/cleanc2 run --cmd "uptime" --agents web1 --wait          # 单机执行并等结果
-./bin/cleanc2 run --cmd "df -h" --tag prod --yes --wait       # 批量（>1 目标必须 --yes）
+./bin/cleanc2 health                          # 连通性自检
+./bin/cleanc2 agents list --online            # 在线清单
+./bin/cleanc2 run --cmd "df -h" --agents web1 --wait
+./bin/cleanc2 run --cmd "yum -y update" --tag env=prod --yes --wait
 ./bin/cleanc2 push --agent web1 --local ./app.bin --remote /opt/app.bin --wait
 ./bin/cleanc2 pull --agent web1 --remote /var/log/app.log --local ./app.log --wait
 ./bin/cleanc2 tasks cancel <task_id>
 ./bin/cleanc2 groups create --name ops --agents a1,a2
-./bin/cleanc2 groups add g1 a3 ; ./bin/cleanc2 groups remove g1 a1
+./bin/cleanc2 schema                          # 机器可读命令全表
 ```
 
-`run --wait` 的聚合输出形如 `{"all_ok":false,"results":[{"task_id","agent_id","state","exit_code","stdout","stderr","duration_ms"}]}`；任一任务非 success 时进程退出码为 1。
+完整命令面（`schema` 里逐条有 flag 类型与默认值）：`health` · `agents list|get|metrics|history` · `groups list|get|create|add|remove` · `run` · `tasks list|get|cancel` · `metrics overview` · `transfers list|get` · `plugins list` · `push` · `pull` · `schema` · `help`。
 
-给 AI/自动化代理的完整契约（退出码语义、陷阱清单、工作流模板）：`docs/ai-usage.md`。程序化接入第一步永远是 `cleanc2 schema`。
+**输出契约**——为程序化调用设计：
 
-AI 友好约定：stdout 只输出紧凑 JSON（`--pretty` 缩进），错误 JSON 走 stderr；退出码稳定 —— `0` 成功 / `1` 服务端或任务失败 / `2` 连不上 / `3` 鉴权失败 / `4` 用法错误；任何命令不交互、不 spinner；全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可出现在 argv 任意位置。
+- stdout 只有一个紧凑 JSON 文档（`--pretty` 换缩进）；错误 JSON 走 stderr，日志永不混进结果
+- 退出码稳定：`0` 成功 · `1` 服务端/任务/传输失败或等待超时 · `2` 连不上 · `3` 鉴权失败 · `4` 用法错误
+- 零交互：无提示、无确认等待、无进度条；危险面（多目标 fan-out）靠 `--yes` 显式声明
+- 全局 flag（`-server` `-token` `--pretty` `-timeout` `-insecure`）可站在命令行任意位置
+- 目标解析：`-server` / `CLEANC2_SERVER` 给路径走 socket，给 `http(s)://` 走 TCP；token 走 `CLEANC2_TOKEN`
+- 三个超时别混：`--exec-timeout`（任务执行秒数）· 全局 `-timeout`（HTTP 请求时长）· `--wait-timeout`（CLI 轮询预算）
 
-Server 的 Operator 面拓扑：
+### AI 集成
 
-- 默认 Unix socket：`./cleanc2.sock`（`-operator-uds` / `operator_uds`），权限 `0600`，**不需要 token**（文件权限即边界）
-- TCP 逃生门：`-operator-listen <addr>`，启用后该面全部请求强制 token（生成：`openssl rand -hex 32`）
-- CLI 目标解析：`-server` / `CLEANC2_SERVER`，值以路径形式给（`./x.sock`、`/var/x.sock`）走 socket，`http(s)://` 走 TCP；token 走 `CLEANC2_TOKEN`
+接入三步：跑一次 `cleanc2 schema` 学命令面 → 按退出码 + `results[]` 分支 → 参照 [docs/ai-usage.md](docs/ai-usage.md)（工作流模板、陷阱清单、聚合输出格式）。验收方式就是它自己：一个只拿到 schema 输出、没读过任何源码的 LLM Agent，独立完成了 7 步巡检→下发→建组→统计的运维闭环。
 
-手工调试（CLI 之下的裸 API）：
+### 裸 API
+
+CLI 之下是普通 HTTP JSON（手工调试用）。空列表返回 `[]` 不返回 `null`：
 
 ```bash
 curl --unix-socket ./cleanc2.sock http://unix/api/v1/agents
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/api/v1/agents   # operator-listen 模式
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8081/api/v1/tasks   # operator-listen 模式
 ```
 
-## API
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/healthz` | 存活探针（两面各一份，响应带 `plane`） |
+| GET | `/api/v1/agents` · `/api/v1/agents/:id/metrics` · `…/metrics/history` | Agent 与指标 |
+| GET/POST | `/api/v1/groups` · `/api/v1/groups/:id` | 分组（POST 全量替换语义） |
+| GET/POST | `/api/v1/tasks` · `/api/v1/tasks/batch` · `/:id` · `/:id/cancel` | 任务 |
+| POST | `/api/v1/files/upload` · `/api/v1/files/download` | 传输（`--local` 是 Server 侧路径） |
+| GET | `/api/v1/transfers` · `/:id` · `/api/v1/plugins` · `/api/v1/metrics/overview` | 只读 |
+| GET | `/ws/agent` | Agent 长连接（仅 Agent 面） |
 
-- `GET /healthz`（两面各一份，响应带 `plane` 字段）
-- `GET /api/v1/agents`
-- `GET /api/v1/agents/:id/metrics`
-- `GET /api/v1/agents/:id/metrics/history`
-- `GET /api/v1/metrics/overview`
-- `GET /api/v1/groups`
-- `GET /api/v1/groups/:id`
-- `POST /api/v1/groups`
-- `GET /api/v1/tasks`
-- `POST /api/v1/tasks`
-- `POST /api/v1/tasks/batch`
-- `GET /api/v1/tasks/:id`
-- `POST /api/v1/tasks/:id/cancel`
-- `POST /api/v1/files/upload`
-- `POST /api/v1/files/download`
-- `GET /api/v1/transfers`
-- `GET /api/v1/transfers/:id`
-- `GET /api/v1/plugins`
-- `GET /ws/agent`
+## 线协议
 
-## 参数
-
-Server:
-
-- `-config`
-- `-listen`
-- `-operator-uds`
-- `-operator-listen`
-- `-token`
-- `-api-token`
-- `-db`
-- `-plugins`
-- `-tls-cert`
-- `-tls-key`
-- `-client-ca`
-- `-require-tls`
-- `-write-wait`
-- `-pong-wait`
-- `-ping-period`
-
-Agent:
-
-- `-server`
-- `-token`
-- `-agent-id`
-- `-tags`
-- `-heartbeat`
-- `-max-backoff`
-- `-server-name`
-- `-ca-cert`
-- `-client-cert`
-- `-client-key`
+`proto/cleanc2/v1/wire.proto` 是单一事实源，生成码入库。帧自描述：WebSocket text 帧 = 旧 JSON 信封，binary 帧 = protobuf `WireEnvelope`；Agent 在 hello 里声明 `proto_version`，Server 决定升档与否，混跑兼容。二进制帧下文件 chunk 走裸 bytes（JSON 路径的 base64 膨胀 -33%），且 `stdout`/`stderr`/`command` 为 bytes 字段——非 UTF-8 输出不再被静默损坏。改 `.proto` 后 `make proto` 重生成并保证对拍测试绿。
 
 ## 安全
 
-- WebSocket 握手拒绝一切携带 `Origin` 头的请求（Dashboard 已移除，合法 Agent 不发 `Origin`；含 `Origin: null` 在内的浏览器请求一律拒绝）。
-- Operator 面默认只监听 Unix socket（`0600`），访问边界是文件系统权限；Token 校验使用恒定时间比较，避免时序侧信道（TCP 逃生门启用时）。
-- 文件传输按 `Seq` 重排并校验缺包/重复，配合 SHA256 兜底校验完整性。
-- 生产环境务必启用 TLS：Server 配置 `tls_cert` / `tls_key`（可选 `client_ca` 开启 mTLS），Agent 使用 `wss://` 并配置 `-ca-cert` / `-client-cert` / `-client-key`。
-- 未启用 TLS 时 Server 与 Agent 都会打印警告；Server 可用 `-require-tls` 强制拒绝在无 TLS 配置时启动。
+- **双平面隔离**：Agent 面只有 WS 升级与探针；全部管理 API 只在 Operator 面。
+- **默认 socket 边界**：Operator 面 `0600` Unix socket，token 不落配置文件；TCP 逃生门一旦启用，每请求强制恒定时间比较的 token（Bearer / Basic 两式）。
+- **无浏览器即拒浏览器**：携带任何 `Origin`（含 `null`）的 WS 握手一律拒绝。
+- **传输完整性**：分块 `Seq` 重排 + 缺包/重复检测 + SHA256 兜底。
+- **生产请 TLS**：Server 配 `tls_cert`/`tls_key`（可选 `client_ca` 开 mTLS），Agent 走 `wss://` + 证书参数；`-require-tls` 可硬约束。未启用 TLS 时两端都会打警告。
 
 ## 任务执行语义
 
-- 任务在**成功发送给 Agent 时**即标记为 `dispatched`（至多执行一次语义），不再等待 Agent 的 `task_ack`，从而避免「ack 丢失 → 任务仍为 queued → 重连后重复执行」。
-- 已下发但长时间未回结果的任务（`dispatched` / `cancel_requested`）由 Server 侧回收器按 `timeout_secs + 30s` 兜底标记为 `timeout` / `canceled`，不会静默卡死。
-- Agent 执行命令时使用独立进程组，取消或超时会终止整棵进程树，避免后台子进程残留。
+- **至多一次派发**：任务成功发送给 Agent 即标 `dispatched`，不等 `task_ack`——ack 丢失不会导致重连后重复执行。
+- **回收器兜底**：`dispatched`/`cancel_requested` 超 `timeout_secs + 30s` 无结果，Server 标记 `timeout`/`canceled`。
+- **进程组隔离**：Agent 以独立进程组执行，取消/超时终止整棵进程树。
+- 终态枚举：`success | failed | timeout | canceled`。
 
 ## 插件
 
-`server` 会加载 `-plugins` 目录下的可执行文件。
+Server 加载 `-plugins` 目录下可执行文件，事件 JSON 从 stdin 传入，钩子：`agent_connected` · `task_result` · `transfer_done` · `metrics_report`。样例见 [plugins/example-plugin.sh.sample](plugins/example-plugin.sh.sample)。
 
-hook:
+## 已知限制
 
-- `agent_connected`
-- `task_result`
-- `transfer_done`
-- `metrics_report`
+- 命令执行 = `/bin/sh -c`，无 Windows 原生支持
+- 监控为基础指标（无 CPU/内存占用率、无进程级），历史每 Agent 封顶 1000 条
+- 插件是本地可执行文件钩子，无沙箱隔离、无热重载
+- 传输失败保留 `.part` 供续传（同一目标路径视为同一任务）
+- 后续方向见 [docs/mvp.md](docs/mvp.md)（Phase 2/3：完整指标、插件隔离）
 
-事件 JSON 从 stdin 传入。样例见 `plugins/README.md` 和 `plugins/example-plugin.sh.sample`。
+## 仓库结构
 
-## 限制
+```
+cmd/server  cmd/agent  cmd/cli     # 三个二进制入口
+internal/server                    # 双平面 HTTP/WS、任务、传输、存储、插件
+internal/agent                     # 拨出连接、执行器、指标、文件 IO
+internal/protocol  internal/protocol/pb   # 手写编解码层 / protoc 生成码
+internal/cli                       # 操控端（registry + 命令 + HTTP client）
+internal/common                    # ID / 分块 / 校验和 / 主机信息
+proto/cleanc2/v1/wire.proto        # 线协议单一事实源
+docs/                              # ai-usage（AI 契约）· refactor-plan（v2 改造全记录）· mvp
+plugins/  scripts/  config.yaml    # 插件样例 · 生成脚本 · 默认配置
+```
 
-- 只支持 Shell 命令执行（`/bin/sh -c`，无 Windows 原生支持）
-- 监控为基础指标（无 CPU/内存占用率、进程级指标），历史按 Agent 保留最近 1000 条
-- 插件只支持本地可执行文件钩子
-- 文件传输失败后 `.part` 临时文件会保留用于续传（同一目标路径的传输视为同一任务）
+## 许可
+
+待定（仓库暂无 LICENSE 文件）。
